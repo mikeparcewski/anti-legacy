@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "requirements-graph.enriched.schema.json",
   "title": "anti-legacy Requirements Graph (enriched profile)",
-  "description": "Tightened overlay of requirements-graph.schema.json, run by GATE_1_DESIGN AFTER enrich_requirements.py. Every requirement MUST carry business_rules (>=1), validations, and error_paths as object-form, ID'd items (RULE-/VAL-/ERR- + three-digit zero-padded, unique within a requirement). This is the post-migration profile: rule/validation/errorPath items are OBJECT-ONLY here (the transitional string form accepted by the base profile is NOT accepted). The $defs are copied from the base file so the validator does not depend on cross-file $ref resolution; they are intentionally the object branch of the base file's anyOf shapes.",
+  "description": "Tightened overlay of requirements-graph.schema.json, run by GATE_1_DESIGN AFTER enrich_requirements.py. Every requirement MUST carry business_rules (>=1), validations, and error_paths as object-form, ID'd items (RULE-/VAL-/ERR- + three-to-six-digit zero-padded, unique within a requirement). This is the post-migration profile: rule/validation/errorPath items are OBJECT-ONLY here (the transitional string form accepted by the base profile is NOT accepted). The $defs are copied from the base file so the validator does not depend on cross-file $ref resolution; they are intentionally the object branch of the base file's anyOf shapes. IDs wider than 3 digits are emitted automatically when community sub-partitioning still yields >999 members (dense modern codebases such as Apache Kafka).",
   "type": "object",
   "required": ["domains"],
   "$defs": {
@@ -11,7 +11,7 @@
       "required": ["id", "statement"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^RULE-[0-9]{3}$" },
+        "id": { "type": "string", "pattern": "^RULE-[0-9]{3,6}$" },
         "statement": { "type": "string", "minLength": 1 },
         "source_ref": { "type": "string" },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -39,10 +39,10 @@
       "required": ["id", "statement"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^VAL-[0-9]{3}$" },
+        "id": { "type": "string", "pattern": "^VAL-[0-9]{3,6}$" },
         "statement": { "type": "string", "minLength": 1 },
         "field": { "type": "string" },
-        "error_ref": { "type": "string", "pattern": "^ERR-[0-9]{3}$" },
+        "error_ref": { "type": "string", "pattern": "^ERR-[0-9]{3,6}$" },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "provenance": {
           "type": "object",
@@ -68,7 +68,7 @@
       "required": ["id", "statement"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^ERR-[0-9]{3}$" },
+        "id": { "type": "string", "pattern": "^ERR-[0-9]{3,6}$" },
         "statement": { "type": "string", "minLength": 1 },
         "code": { "type": "string" },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },

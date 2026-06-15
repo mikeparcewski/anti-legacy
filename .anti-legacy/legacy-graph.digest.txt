@@ -1,0 +1,15 @@
+# app: apache-kafka
+nodes=138726 edges=361937 files=6977
+edge "calls" = 143474
+edge "contains" = 123094
+edge "extends" = 763
+edge "implements" = 986
+edge "imports" = 93620
+
+# app: apache-pulsar
+nodes=81112 edges=200003 files=5045
+edge "calls" = 65654
+edge "contains" = 70967
+edge "extends" = 1252
+edge "implements" = 594
+edge "imports" = 61536

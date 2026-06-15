@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "requirements-graph.schema.json",
   "title": "anti-legacy Requirements Graph",
-  "description": "Output of graph_normalizer.py (raw 'draft' profile). Language-agnostic requirements organized by business domains. business_rules / validations / error_paths are first-class, ID'd items but OPTIONAL in this base profile so raw normalizer output (no rules) AND enriched output (with rules) both validate. The enriched overlay schemas/requirements-graph.enriched.schema.json tightens these to REQUIRED after enrich_requirements.py runs. ID CONVENTION: RULE-/VAL-/ERR- + three-digit zero-padded, UNIQUE WITHIN A REQUIREMENT (ids restart per requirement; the canonical global key is legacy_component+id, e.g. '<source_app>:<program>#RULE-002'). A validation's error_ref points at an ERR id in the SAME requirement (this intra-req join is what the round-trip done-check uses to verify a validation maps to a handled error path).",
+  "description": "Output of graph_normalizer.py (raw 'draft' profile). Language-agnostic requirements organized by business domains. business_rules / validations / error_paths are first-class, ID'd items but OPTIONAL in this base profile so raw normalizer output (no rules) AND enriched output (with rules) both validate. The enriched overlay schemas/requirements-graph.enriched.schema.json tightens these to REQUIRED after enrich_requirements.py runs. ID CONVENTION: RULE-/VAL-/ERR- + three-to-six-digit zero-padded, UNIQUE WITHIN A REQUIREMENT (ids restart per requirement; the canonical global key is legacy_component+id, e.g. '<source_app>:<program>#RULE-002'). A validation's error_ref points at an ERR id in the SAME requirement (this intra-req join is what the round-trip done-check uses to verify a validation maps to a handled error path). IDs wider than 3 digits (e.g. RULE-001234) are emitted automatically when a community is large enough that sub-partitioning still yields >999 members.",
   "type": "object",
   "required": ["domains"],
   "$defs": {
@@ -15,7 +15,7 @@
           "required": ["id", "statement"],
           "additionalProperties": false,
           "properties": {
-            "id": { "type": "string", "pattern": "^RULE-[0-9]{3}$" },
+            "id": { "type": "string", "pattern": "^RULE-[0-9]{3,6}$" },
             "statement": { "type": "string", "minLength": 1 },
             "source_ref": { "type": "string" },
             "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -41,10 +41,10 @@
           "required": ["id", "statement"],
           "additionalProperties": false,
           "properties": {
-            "id": { "type": "string", "pattern": "^VAL-[0-9]{3}$" },
+            "id": { "type": "string", "pattern": "^VAL-[0-9]{3,6}$" },
             "statement": { "type": "string", "minLength": 1 },
             "field": { "type": "string" },
-            "error_ref": { "type": "string", "pattern": "^ERR-[0-9]{3}$" },
+            "error_ref": { "type": "string", "pattern": "^ERR-[0-9]{3,6}$" },
             "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
             "provenance": {
               "type": "object",
@@ -68,7 +68,7 @@
           "required": ["id", "statement"],
           "additionalProperties": false,
           "properties": {
-            "id": { "type": "string", "pattern": "^ERR-[0-9]{3}$" },
+            "id": { "type": "string", "pattern": "^ERR-[0-9]{3,6}$" },
             "statement": { "type": "string", "minLength": 1 },
             "code": { "type": "string" },
             "confidence": { "type": "number", "minimum": 0, "maximum": 1 },

@@ -21,7 +21,7 @@ What "fixed" means (post-fix behavior these assertions encode)
 2. A NEW enriched overlay schema
    (schemas/requirements-graph.enriched.schema.json) exists and REQUIRES the
    three rich arrays on every requirement, with ID patterns
-   ^RULE-\d{3}$ / ^VAL-\d{3}$ / ^ERR-\d{3}$ and business_rules minItems>=1.
+   ^RULE-\d{3,6}$ / ^VAL-\d{3,6}$ / ^ERR-\d{3,6}$ and business_rules minItems>=1.
 
 Two assertion tiers
 -------------------
@@ -223,8 +223,11 @@ def test_t3_enriched_schema_requires_rich_fields(repo_root):
         f"{required_lists}"
     )
 
-    # Object-form ID patterns must be enforced (RULE-/VAL-/ERR- + 3 digits).
-    assert "^RULE-[0-9]{3}$" in blob or "^RULE-\\d{3}$" in blob, (
+    # Object-form ID patterns must be enforced (RULE-/VAL-/ERR- + 3-to-6 digits;
+    # widened from a fixed 3 so dense modern codebases whose sub-partitioned
+    # communities still exceed 999 members get schema-valid IDs — see
+    # _sub_partition_by_package in domain_graph.py).
+    assert "^RULE-[0-9]{3,6}$" in blob or "^RULE-\\d{3,6}$" in blob, (
         "enriched schema does not enforce the RULE-NNN id pattern"
     )
 
@@ -266,7 +269,7 @@ def test_t3_enriched_rejects_bad_rule_id_pattern(repo_root):
     ]
     assert list(validator.iter_errors(_wrap_single_req(req_bad_pattern))), (
         "enriched profile accepted business_rule id 'RULE-1' (must match "
-        "^RULE-[0-9]{3}$)"
+        "^RULE-[0-9]{3,6}$)"
     )
 
     # (b) missing id entirely

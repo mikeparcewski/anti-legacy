@@ -33,8 +33,11 @@ __pycache__/
 !.anti-legacy/vocabulary.json
 
 # Per-run pipeline output — regenerated per workspace by the pipeline, NEVER committed.
-# Source-agnostic plugin: no test-repo (carddemo/credit-card) data baked into the repo.
-.anti-legacy/requirements/
+# Source-agnostic plugin: no private test-repo data baked into the repo. The ONE
+# exception is the shipped public demo graph (derived from the Apache Kafka + Apache
+# Pulsar producer APIs) that the eval-tier real-graph tests validate.
+.anti-legacy/requirements/*
+!.anti-legacy/requirements/requirements_graph.json
 .anti-legacy/contracts/
 .anti-legacy/coverage-report.json
 .anti-legacy/coverage-report.md

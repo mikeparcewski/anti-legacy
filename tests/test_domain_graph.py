@@ -353,7 +353,7 @@ class TestHappyPathSingleApp(DomainGraphTestBase):
             self.assertGreaterEqual(len(req["business_rules"]), 1)
             for br in req["business_rules"]:
                 self.assertIsInstance(br, dict)
-                self.assertRegex(br["id"], r"^RULE-[0-9]{3}$")
+                self.assertRegex(br["id"], r"^RULE-[0-9]{3,6}$")
                 self.assertTrue(br["statement"])
                 # provenance object carries the source app.
                 self.assertEqual(br["provenance"]["source_app"], self.APP)
@@ -751,7 +751,7 @@ class TestRiskHandling(DomainGraphTestBase):
         (_rid, (_dname, req)), = self.all_requirements(graph).items()
         self.assertEqual(req["status"], "review")
         self.assertGreaterEqual(len(req["business_rules"]), 1)
-        self.assertRegex(req["business_rules"][0]["id"], r"^RULE-[0-9]{3}$")
+        self.assertRegex(req["business_rules"][0]["id"], r"^RULE-[0-9]{3,6}$")
         self.assertEqual(self.schema_validate(graph), [])
 
 
@@ -1234,7 +1234,7 @@ class TestNetNewRequirements(DomainGraphTestBase):
         self.assertEqual(req["disposition"], "new")
         self.assertGreaterEqual(len(req["business_rules"]), 2)
         for br in req["business_rules"]:
-            self.assertRegex(br["id"], r"^RULE-[0-9]{3}$")
+            self.assertRegex(br["id"], r"^RULE-[0-9]{3,6}$")
         # Net-new contributes NOTHING to the round-trip denominator (legacy only).
         self.assertEqual(roundtrip["roundtrip_coverage"], 1.0)
         self.assertEqual(roundtrip["legacy_rule_total"], 2)  # only the 2 legacy members
@@ -1636,6 +1636,98 @@ class TestSourceKindsPassthrough(DomainGraphTestBase):
         self.assertEqual(br["provenance"]["source_kinds"], ["comment"])
         # Comment-only grounding -> the reference trust predicate says untrusted.
         self.assertEqual(self.schema_validate(graph), [])
+
+
+# ===========================================================================
+# Large-community sub-partitioning (dense modern-code defence).
+# A community that exceeds max_community_size is split by file/package prefix
+# so each generated requirement stays tractable and schema-valid.
+# ===========================================================================
+class TestLargeCommunitySubPartition(DomainGraphTestBase):
+    APP = "dense-app"
+
+    def setUp(self):
+        super().setUp()
+        # Build a community of 6 members split across 2 packages — this exercises
+        # the sub-partition path when max_community_size is set very low (3).
+        # pkg-a: s1, s2, s3  (three calls: s1→s2→s3 — one connected component)
+        # pkg-b: s4, s5, s6  (three calls: s4→s5→s6)
+        # Cross-package call s3→s4 puts them in one community.
+        nodes = [
+            (1, "s1", "DO-A1", "function", "pkg-a/a1.java"),
+            (2, "s2", "DO-A2", "function", "pkg-a/a2.java"),
+            (3, "s3", "DO-A3", "function", "pkg-a/a3.java"),
+            (4, "s4", "DO-B1", "function", "pkg-b/b1.java"),
+            (5, "s5", "DO-B2", "function", "pkg-b/b2.java"),
+            (6, "s6", "DO-B3", "function", "pkg-b/b3.java"),
+        ]
+        edges = [
+            (1, 2, "calls", 0.9, "pkg-a/a1.java"),
+            (2, 3, "calls", 0.9, "pkg-a/a2.java"),
+            (3, 4, "calls", 0.9, "pkg-a/a3.java"),  # cross-package call
+            (4, 5, "calls", 0.9, "pkg-b/b1.java"),
+            (5, 6, "calls", 0.9, "pkg-b/b2.java"),
+        ]
+        build_fixture_db(self.db_for(self.APP), nodes, edges)
+        write_overlay(self.overlay_path, [
+            overlay_row(self.APP, sid, name="DO-%s" % sid,
+                        statement="handles %s" % sid, confidence=0.9, status="resolved")
+            for sid in ("s1", "s2", "s3", "s4", "s5", "s6")
+        ])
+        write_coverage_report(self.coverage_path, coverage=1.0)
+
+    def _write_config_with_max(self, max_size):
+        cfg = {
+            "migration_mode": "functional",
+            "source_apps": [{"name": self.APP, "language": "java"}],
+            "coverage": {"resolve_threshold": 0.75},
+            "domain_graph": {"max_community_size": max_size},
+        }
+        with open(self.config_path, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh)
+
+    def test_sub_partition_splits_oversized_community(self):
+        """When max_community_size=3, the 6-member community is split into
+        pkg-a (3 members) and pkg-b (3 members) → 2 requirements."""
+        self._write_config_with_max(3)
+        graph, _rt, _d, errors = self.run_build([self.APP])
+        self.assertEqual(errors, [], "schema errors after sub-partition: %s" % errors)
+        reqs = self.all_requirements(graph)
+        self.assertEqual(len(reqs), 2,
+                         "expected 2 sub-partitioned requirements, got %d" % len(reqs))
+        for _rid, (_dname, req) in reqs.items():
+            self.assertLessEqual(len(req["business_rules"]), 3,
+                                 "each partition must have ≤3 rules after split")
+
+    def test_no_members_lost_in_sub_partition(self):
+        """All 6 members are represented across the two requirements."""
+        self._write_config_with_max(3)
+        graph, _rt, _d, _e = self.run_build([self.APP])
+        all_rule_refs = [
+            lc for req_data in graph["domains"].values()
+            for req in req_data.get("requirements", {}).values()
+            for lc in req.get("legacy_components", [])
+        ]
+        self.assertEqual(len(all_rule_refs), 6,
+                         "all 6 members must appear in legacy_components across partitions")
+
+    def test_large_community_does_not_split_when_below_threshold(self):
+        """With max_community_size=10, the 6-member community stays as one
+        requirement (no split needed)."""
+        self._write_config_with_max(10)
+        graph, _rt, _d, errors = self.run_build([self.APP])
+        self.assertEqual(errors, [], "schema errors: %s" % errors)
+        reqs = self.all_requirements(graph)
+        self.assertEqual(len(reqs), 1,
+                         "community below threshold must remain a single requirement")
+
+    def test_rule_ids_fit_schema_after_sub_partition(self):
+        """After sub-partition every rule ID must match ^RULE-[0-9]{3,6}$."""
+        self._write_config_with_max(3)
+        graph, _rt, _d, _e = self.run_build([self.APP])
+        for _rid, (_dname, req) in self.all_requirements(graph).items():
+            for br in req["business_rules"]:
+                self.assertRegex(br["id"], r"^RULE-[0-9]{3,6}$")
 
 
 if __name__ == "__main__":

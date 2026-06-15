@@ -24,5 +24,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest jsonschema
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Configure git identity
+        # git_brain stores memory as commits in throwaway local repos; `git commit`
+        # aborts with "empty ident name" on a fresh runner that has no global
+        # identity. Set one so the git_brain suite runs instead of erroring.
+        run: |
+          git config --global user.email "ci@anti-legacy.invalid"
+          git config --global user.name "anti-legacy CI"
       - name: Run test suite
         run: python -m pytest -q

@@ -173,10 +173,11 @@ def resolve_binary(
         return fb
 
     raise WickedEstateError(
-        "wicked-estate binary not found. Set `wicked_estate_path` (absolute path "
-        "to the binary) in .anti-legacy/config.json, export WICKED_ESTATE_PATH, "
-        "put `wicked-estate` on PATH, or install the wicked-estate release at "
-        f"{WICKED_ESTATE_FALLBACK}."
+        "wicked-estate engine is REQUIRED and was not found. Install it with "
+        "`cargo install wicked-estate` (needs the Rust toolchain — one-line install at "
+        "https://rustup.rs), then make sure `wicked-estate` is on PATH. Alternatively, "
+        "set `wicked_estate_path` in .anti-legacy/config.json or export WICKED_ESTATE_PATH "
+        "to an existing binary. The pipeline cannot index, extract, or build without it."
     )
 
 
@@ -1196,8 +1197,20 @@ def _probe_native_subcommand(sub: str, binary: str | None = None) -> bool:
 
     This is the runtime native-or-shim selector: if a future engine release adds
     one of these as a real subcommand, the helper transparently switches to it.
+
+    When NO engine binary is resolvable (none configured / on PATH — e.g. CI, or
+    any host without the engine), native is simply unavailable: return False so
+    the caller falls back to the deterministic stdlib shim, rather than letting
+    resolve_binary() raise and crash an otherwise-shim-capable call.
     """
-    bin_path = binary or resolve_binary()
+    if binary:
+        bin_path = binary
+    else:
+        try:
+            bin_path = resolve_binary()
+        except WickedEstateError:
+            _SUBCMD_NATIVE_CACHE[(None, sub)] = False
+            return False
     key = (bin_path, sub)
     if key in _SUBCMD_NATIVE_CACHE:
         return _SUBCMD_NATIVE_CACHE[key]

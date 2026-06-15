@@ -1,5 +1,7 @@
 # anti-legacy
 
+> ⚠️ **Experimental.** This is an early-stage, experimental project under active development. Interfaces, schemas, and outputs may change without notice. Capability extraction is strongest on mainframe / loosely-coupled estates and rougher on dense modern codebases (see [BACKLOG.md](BACKLOG.md)). Not production-ready — use it for exploration and evaluation.
+
 A semi-autonomous legacy modernization pipeline plugin for **Antigravity**. Point it at one or more legacy/source codebases — COBOL, Java, SAP ABAP, RPG/400, C#, whatever — and it indexes them into a **wicked-estate** code graph (the structural spine), annotates each behavior-bearing node with its business rule to a provable coverage terminal, runs a structured team review, then orchestrates a swarm of subagents to rebuild them as **one** combined target spec / **one** app in your target stack (e.g. a COBOL carddemo + a Java credit-card service merged into a single Java service). Gates require human sign-off; everything between them runs autonomously.
 
 This is a **behavior-preserving targeted rewrite**: the data contracts (shapes), interfaces, and jobs (full functionality) are **invariant** — only the code/implementation is reimagined in the new stack.
@@ -13,6 +15,32 @@ No external servers. No cloud services. Git and fileshares only.
 ---
 
 ## Install
+
+### Prerequisite: the wicked-estate engine (required)
+
+anti-legacy is built on the [**wicked-estate**](https://github.com/mikeparcewski/wicked-estate) code-graph engine — a single Rust binary (tree-sitter + SQLite, 91 languages + the mainframe/IaC estate). It is a **hard requirement**: `survey`, `extraction`, `analyze`, and the build phases all index and read the estate through it. The pipeline cannot run without it.
+
+Install it with one command:
+
+```bash
+cargo install wicked-estate
+```
+
+No Rust toolchain yet? Install it first (one line, all platforms), then re-run the command above:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # https://rustup.rs
+```
+
+Verify it is on your `PATH`:
+
+```bash
+wicked-estate --version
+```
+
+> The plugin resolves the engine in priority order: `wicked_estate_path` in `.anti-legacy/config.json` → `WICKED_ESTATE_PATH` env var → `wicked-estate` on `PATH`. If none resolve, every graph phase fails fast with the install command above — it never silently degrades.
+
+### Install the plugin
 
 ```bash
 # As Antigravity plugin (recommended)

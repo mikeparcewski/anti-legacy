@@ -88,6 +88,13 @@ SCHEMA_PATH = os.path.join(
 # partition today. Hardcoding it is correct, not a shortcut.
 CLUSTER_WEIGHT = "calls"
 
+# When a community's behavior-bearing member count exceeds this threshold the
+# community is too large to yield a meaningful capability unit (dense modern code
+# collapses into one near-fully-connected blob).  Sub-partition by file/package
+# prefix so each generated requirement stays tractable.
+# Override per project via config.json: {"domain_graph": {"max_community_size": N}}.
+DEFAULT_MAX_COMMUNITY_MEMBERS = 500
+
 # Data-asset kinds: a member's outgoing edge to one of these is a data_access.
 # Derived from coverage.py's structural-leaf taxonomy (the data side of it), so
 # this stays in lock-step with the engine's kind vocabulary. Repo-agnostic.
@@ -554,6 +561,34 @@ def _rule_object(rule_id, statement, symbol_id, app_name, annotation):
 
 
 # ---------------------------------------------------------------------------
+# Sub-partition an oversized community by file/package prefix.
+# ---------------------------------------------------------------------------
+def _sub_partition_by_package(member_ids, nodes):
+    """Split member_ids into sub-groups keyed by the PARENT DIRECTORY of each
+    node's file.  Returns {package_dir: [symbol_ids]}.
+
+    Parent directory is the portion of the file path up to (but not including)
+    the filename — e.g. "src/main/java/org/apache/kafka/clients/consumer" for a
+    file at "src/main/java/org/apache/kafka/clients/consumer/ConsumerRecord.java".
+    This is the right semantic boundary for modern Java/Scala/Python packages and
+    produces one requirement per source-package directory.
+
+    Every member lands in exactly one group — members without file info land in the
+    "" (root) group so nothing is silently dropped.  When all members live in the
+    same directory the result is a single-entry dict (no split; the caller handles
+    the still-oversized case via schema-valid adaptive rule IDs).
+    """
+    groups: dict = {}
+    for sid in member_ids:
+        file_path = (nodes.get(sid) or {}).get("file") or ""
+        norm = file_path.replace("\\", "/").rstrip("/")
+        slash = norm.rfind("/")
+        key = norm[:slash] if slash >= 0 else ""
+        groups.setdefault(key, []).append(sid)
+    return groups
+
+
+# ---------------------------------------------------------------------------
 # Build one capability requirement from a community's behavior members.
 # ---------------------------------------------------------------------------
 def _risk_reason_for(ann):
@@ -607,12 +642,15 @@ def build_requirement(app: dict, label, member_ids, settings):
 
     # One rule per behavior member, ids re-numbered RULE-NNN deterministically over
     # the (sorted) members so ids are stable + unique within the requirement.
+    # Width: minimum 3 digits; widens automatically for large communities so IDs stay
+    # unique and match the schema's ^RULE-[0-9]{3,6}$ pattern.
+    rule_id_width = max(3, len(str(len(member_ids))))
     rule_seq = 0
     for sid in member_ids:
         ann = annotations.get(sid)
         state, _conf = member_state(ann, settings)
         rule_seq += 1
-        rid = "RULE-%03d" % rule_seq
+        rid = "RULE-%0*d" % (rule_id_width, rule_seq)
         if state == "resolved":
             n_resolved += 1
             statement = (ann.get("statement") or "").strip() or "RESOLVED (no statement text)"
@@ -915,6 +953,8 @@ def assemble_graph(apps, settings, migration_mode, net_new_specs=None):
     requirements_by_id: dict = {}   # req_id -> {requirement, domain, app, legacy_edges}
     legacy_L = []                   # [{app, symbol_id, rule_id, state}] per behavior member
 
+    max_members = int(settings.get("max_community_size", DEFAULT_MAX_COMMUNITY_MEMBERS))
+
     for app in apps:
         communities = app["communities"]
         behavior_ids = app["behavior_ids"]
@@ -925,20 +965,36 @@ def assemble_graph(apps, settings, migration_mode, net_new_specs=None):
             behavior_members = [m for m in members if m in behavior_ids]
             if not behavior_members:
                 continue
-            req_id, requirement, domain_name, edges = build_requirement(
-                app, label, behavior_members, settings
-            )
-            # If a (rare) hash collision across apps maps two distinct member sets
-            # to the same req_id, suffix the app to keep ids unique.
-            if req_id in requirements_by_id:
-                req_id = "%s_%s" % (req_id, app["app"].upper().replace("-", "_")[:8])
-            requirements_by_id[req_id] = {
-                "requirement": requirement,
-                "domain": domain_name,
-                "app": app["app"],
-                "legacy_edges": edges,
-            }
-            legacy_L.extend(edges)
+
+            # Sub-partition oversized communities so each requirement stays tractable.
+            # Dense modern code (Kafka, Pulsar, Spring monoliths) collapses into a
+            # near-fully-connected call graph → one giant community → meaningless
+            # 64 K-rule "capability".  Split by file/package prefix; each sub-group
+            # becomes its own requirement.  Mainframe systems are unaffected (their
+            # clusters are well below the threshold).
+            if len(behavior_members) > max_members:
+                sub_groups = _sub_partition_by_package(behavior_members, app["nodes"])
+            else:
+                sub_groups = {"": behavior_members}
+
+            for pkg_key, sub_members in sub_groups.items():
+                if not sub_members:
+                    continue
+                sub_label = ("%s:%s" % (label, pkg_key)) if pkg_key else label
+                req_id, requirement, domain_name, edges = build_requirement(
+                    app, sub_label, sub_members, settings
+                )
+                # If a (rare) hash collision across apps maps two distinct member sets
+                # to the same req_id, suffix the app to keep ids unique.
+                if req_id in requirements_by_id:
+                    req_id = "%s_%s" % (req_id, app["app"].upper().replace("-", "_")[:8])
+                requirements_by_id[req_id] = {
+                    "requirement": requirement,
+                    "domain": domain_name,
+                    "app": app["app"],
+                    "legacy_edges": edges,
+                }
+                legacy_L.extend(edges)
 
     # NET-NEW target requirements (Defect-5): the add-capability half of the merge.
     for spec in net_new_specs or []:
@@ -1218,6 +1274,12 @@ def build(
     """
     config = load_config(config_path)
     settings = cov.coverage_settings(config)
+    # Inject the community-size cap so assemble_graph can sub-partition dense repos.
+    settings["max_community_size"] = (
+        int(config.get("domain_graph", {}).get("max_community_size",
+                                                DEFAULT_MAX_COMMUNITY_MEMBERS))
+        if isinstance(config, dict) else DEFAULT_MAX_COMMUNITY_MEMBERS
+    )
     migration_mode = config.get("migration_mode", "functional")
     if migration_mode not in ("structural", "functional"):
         migration_mode = "functional"

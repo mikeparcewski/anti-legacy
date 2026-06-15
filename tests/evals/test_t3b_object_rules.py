@@ -325,7 +325,7 @@ def test_t3b_enriched_still_enforces_rule_id_pattern_with_additive_fields(repo_r
     errors = list(validator.iter_errors(_wrap_single_req(req)))
     assert errors, (
         "enriched profile accepted business_rule id 'RULE-1' even though the "
-        "additive fields were added; id pattern ^RULE-[0-9]{3}$ must hold"
+        "additive fields were added; id pattern ^RULE-[0-9]{3,6}$ must hold"
     )
 
 

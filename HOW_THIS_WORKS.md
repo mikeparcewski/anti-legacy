@@ -15,7 +15,7 @@ legacy code  →  wicked-estate code graph  →  rule annotations on the graph  
 
 The **annotated code graph** is the pivot. Everything before it is indexing + analysis; everything after it is construction. The graph is owned by **wicked-estate** (an MIT code-graph engine — see §H below); the annotations write into the engine's native `requirement` fields and an anti-legacy-owned sidecar. There is no hand-rolled graph and no separate `legacy_graph.json` intermediate.
 
-The pipeline merges **one or more** source repositories into a **single** combined target spec and a single target app — for example a COBOL carddemo plus a Java Credit-Card-Processing-System collapsed into one Java service. The rewrite is **behavior-preserving and targeted**: the data contracts (shapes), the interfaces, and the jobs (full functionality) are treated as invariant; only the code/implementation is reimagined in the target stack.
+The pipeline merges **one or more** source repositories into a **single** combined target spec and a single target app — for example two Java streaming platforms (Apache Kafka + Apache Pulsar, the bundled demo) consolidated into a single service, or a COBOL estate modernized to Java. The rewrite is **behavior-preserving and targeted**: the data contracts (shapes), the interfaces, and the jobs (full functionality) are treated as invariant; only the code/implementation is reimagined in the target stack.
 
 ---
 

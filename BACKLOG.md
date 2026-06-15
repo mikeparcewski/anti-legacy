@@ -8,6 +8,24 @@ Status legend: ✅ done · 🟡 partial/spiked · 🔵 designed · ⚪ idea
 
 ---
 
+## Capability naming + cross-app coalescing on modern code 🔵
+
+On dense modern codebases (the Kafka+Pulsar demo), capability **naming** falls back to noun-frequency
+(`AlreadyAlwaysCapability`) and capabilities do **not coalesce** across source apps. Both have one root
+cause: the vocabulary glossary was not projected onto the graph, so `domain_name_for`'s priority-1
+term-aware path (`domain_entity`/`domain_action` → `{Action}{Entity}Capability`) has nothing to read and
+drops to priority-2 (statement nouns).
+
+- **Fix A (wiring, exists):** run `vocabulary mine → confirm → project_terms_to_graph` before
+  graph-translate so capabilities are named from canonical terms. Same-canonical capabilities across apps
+  then share a domain key and coalesce automatically (see `domain_name_for` docstring).
+- **Fix B (the new bit):** exact-canonical only coalesces when both systems use the *same word*
+  (Kafka "record" vs Pulsar "message" won't merge). Add a **semantic** synonym-resolution step — embed the
+  mined terms / rule statements via wicked-estate `semantic` + `--embeddings` and cluster cross-vocabulary
+  synonyms onto a shared canonical — so record≈message → one canonical → coalesce.
+
+---
+
 ## The model (where we landed)
 
 A code-graph spine, annotated and **re-thought** through an iterative, coverage-driven, HITL loop,
@@ -119,7 +137,7 @@ kept honest by a CI drift gate. **Two graphs**, not one:
 
 ## G — Acceptance criteria ("general-purpose")
 
-- **G1 — CardDemo + Credit-Card-Processing-System → one Java service.** Validates gate enforcement,
+- **G1 — Apache Kafka + Apache Pulsar → one streaming service.** Validates gate enforcement,
   evidence integrity, round-trip, sequencing. **NOT a generality proof.**
 - **G2 — a NON-CardDemo, ideally NON-COBOL migration** (e.g. Java→Go, C#→Java). The real generality test —
   exercises wicked-estate's modern path + the extraction loop end-to-end. **"General-purpose" ⇔ G2 passes.**
