@@ -442,17 +442,53 @@ coverage's source of truth.
   `symbol_id`, `--requirement` / `--description` / `--validated true|false`, and a
   `--rule-object '<JSON>'`. **Pass `--rule-object`** — it merges the structured
   fields (`status`, `confidence`, `verification`, `statement`, `provenance`,
-  `parity`, `legacy_components`, `risk_reason`) as first-class overlay keys, which
-  `coverage.py` and `domain_graph.py` (§I5) read directly. The packed
-  `--requirement` string (`<rule_id>|<conf>|<prov>|<statement>`) is still written
-  and coverage falls back to parsing it + `requirement_validated` if `--rule-object`
-  is omitted — but omitting it loses the `verification` spectrum, so include it.
+  `source_kinds`, `parity`, `legacy_components`, `risk_reason`) as first-class
+  overlay keys, which `coverage.py` and `domain_graph.py` (§I5) read directly. The
+  packed `--requirement` string (`<rule_id>|<conf>|<prov>|<statement>`) is still
+  written and coverage falls back to parsing it + `requirement_validated` if
+  `--rule-object` is omitted — but omitting it loses the `verification` spectrum and
+  the `source_kinds` trust grounding, so include it.
 - **Importable `annotate(db, symbol_id, requirement=, description=, validated=,
   rule_object=<dict>)`** — when a skill drives the helper as a Python library it can
   pass a `rule_object` dict (`{rule_id, statement, confidence, provenance,
-  resolved_by | risk_reason, ring_depth, status}`) that is merged losslessly into
-  the same overlay record. Use this when you want the structured fields as first-
-  class overlay keys rather than only inside the packed `requirement` string.
+  source_kinds, resolved_by | risk_reason, ring_depth, status}`) that is merged
+  losslessly into the same overlay record. Use this when you want the structured
+  fields as first-class overlay keys rather than only inside the packed
+  `requirement` string.
+
+### RECORD `source_kinds` — the GOTCHA-3 trust-tier grounding (REQUIRED)
+
+Every rule's annotation MUST carry a `source_kinds` array naming the grounding
+kind(s) you ACTUALLY READ to state the rule — the evidence behind every
+load-bearing fact in the `statement`, not where you wish it came from. The four
+legal kinds (the enriched schema's enum, enforced):
+
+| `source_kind` | You read… |
+|---|---|
+| `code-body` | executable logic read directly — the paragraph body / method: the `EVALUATE/WHEN`, `MOVE`/`COMPUTE`, `IF` guards, `EXEC SQL`. |
+| `data-def` | a copybook PIC / level-88 `VALUE` (a verifiable DATA DEFINITION) — the field's declared type/width or a named condition value. |
+| `comment` | inline prose — a leading comment, a copybook remark. A *claim*, not code. |
+| `doc` | a README / external document — also a *claim*, not code. |
+
+Record EVERY kind you leaned on (it is a list — a rule grounded in both the body
+and a copybook is `["code-body","data-def"]`; a comment you then CONFIRMED against
+the body is `["comment","code-body"]`).
+
+**The trust rule (this is why the kind matters).** The trust tier follows the
+grounding, not your confidence:
+
+- grounded in `code-body` and/or `data-def` ⇒ **`trusted_verified`** (ground truth
+  — set `verification: trusted_verified`).
+- grounded ONLY in `comment`/`doc`, NOT confirmed against the code/data ⇒
+  **`untrusted_verified`** (a prose claim) — it is **RISK-eligible**: prefer to read
+  the body and confirm, and if you cannot, RISK-flag rather than assert
+  `trusted_verified`.
+
+A copybook-PIC fact (`data-def`) and a comment fact (`comment`) are NOT the same
+evidence — never fold a comment-only claim into `trusted_verified`. `domain_graph.py`
+(§I5) copies `source_kinds` straight onto the emitted rule's `provenance.source_kinds`
+(validated against the enum, optional) so the downstream trust tier is computable;
+omit it and that signal is lost.
 
 In both paths the helper RAISES on an empty/unresolved `symbol_id` (the silent-no-op
 guard) and writes the native field + the JSONL overlay atomically.
@@ -464,8 +500,13 @@ python3 .anti-legacy/run.py wicked_estate --db <db> annotate '<full_symbol_id>' 
   --requirement '<rule_id>|<confidence>|<provenance>|<statement>' \
   --description '<plain-language what-it-is>' \
   --validated true \
-  --rule-object '{"status":"resolved","confidence":<0..1>,"verification":"trusted_verified","statement":"<rule>","provenance":"<rings/edges>","parity":"<parity note or empty>","legacy_components":["<symbol_id>"]}'
+  --rule-object '{"status":"resolved","confidence":<0..1>,"verification":"trusted_verified","statement":"<rule>","provenance":"<rings/edges>","source_kinds":["code-body"],"parity":"<parity note or empty>","legacy_components":["<symbol_id>"]}'
 ```
+
+`source_kinds` names the grounding you READ (see "RECORD `source_kinds`" above):
+`["code-body"]` / `["data-def"]` / both for a `trusted_verified` resolve;
+`["comment"]` or `["doc"]` ALONE is a claim — confirm it against the body (then add
+`code-body`/`data-def`) or RISK-flag, do not assert `trusted_verified` on prose.
 
 ### RISK write (CLI)
 
@@ -474,14 +515,18 @@ python3 .anti-legacy/run.py wicked_estate --db <db> annotate '<full_symbol_id>' 
   --requirement '<rule_id>|<confidence>|<provenance:rings/edges examined>|<gap>' \
   --description '<plain-language what-it-is>' \
   --validated false \
-  --rule-object '{"status":"risk","confidence":<0..1>,"verification":"unverified|untrusted_verified","risk_reason":"<the named gap>","provenance":"<rings/edges examined>","legacy_components":["<symbol_id>"]}'
+  --rule-object '{"status":"risk","confidence":<0..1>,"verification":"unverified|untrusted_verified","risk_reason":"<the named gap>","provenance":"<rings/edges examined>","source_kinds":["comment"],"legacy_components":["<symbol_id>"]}'
 ```
 
 For a RISK flag, encode the `risk_reason` (conflicting rules | missing source |
 unbindable cross-ref | repo disagreement | budget exhausted) and the rings/edges
 examined inside the `<provenance>` segment of the tagged string, and set the
-statement token to `RISK`. (Drive the importable `annotate(..., rule_object=...)`
-if you need `risk_reason` / `ring_depth` / `resolved_by` as discrete overlay keys.)
+statement token to `RISK`. Still record `source_kinds` for whatever grounding you
+DID read (e.g. `["comment"]` when only a prose claim was available — exactly the
+comment-only, `untrusted_verified`, RISK-eligible case the trust rule names; omit it
+only when you read nothing). (Drive the importable `annotate(..., rule_object=...)`
+if you need `risk_reason` / `ring_depth` / `resolved_by` / `source_kinds` as discrete
+overlay keys.)
 
 After each write, verify the round-trip (catches the silent-no-op — positional
 `symbol_id` / `req`):
@@ -618,7 +663,9 @@ python3 .anti-legacy/run.py manifest advance graph-translate
 
 - `.anti-legacy/annotations.jsonl` — the lossless IP overlay (one object per
   resolved/risk node, keyed `{db_id, symbol_id}`): `{rule_id, statement,
-  confidence, provenance, resolved_by | risk_reason, ring_depth, status}`.
+  confidence, provenance, source_kinds, resolved_by | risk_reason, ring_depth,
+  status}`. `source_kinds` (the GOTCHA-3 grounding kinds — see Step 5) rides
+  through to the §I5 rule's `provenance.source_kinds` and fixes the trust tier.
 - wicked-estate native `requirement` / `description` / `requirement_validated`
   fields — the in-graph evidence projection (round-trips via `by-requirement`).
 - `.anti-legacy/coverage-report.json` + `.anti-legacy/coverage-report.md` —

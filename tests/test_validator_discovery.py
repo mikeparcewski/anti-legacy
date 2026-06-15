@@ -169,7 +169,10 @@ class TestValidatorRunner(unittest.TestCase):
                                     {"id": "RULE-001", "statement": "Compute billing amount from balance."}
                                 ],
                                 "validations": [],
-                                "error_paths": []
+                                "error_paths": [],
+                                "parity_hints": [
+                                    {"kind": "money", "field": "billing_amount"}
+                                ]
                             }
                         }
                     }
@@ -193,6 +196,35 @@ class TestValidatorRunner(unittest.TestCase):
         runner = ValidatorRunner(self.test_dir, self.config_path, self.manifest_path)
         success = runner.run_gate("GATE_1_DESIGN")
         self.assertTrue(success)
+
+    def test_run_gate_1_design_parity_hints_missing(self):
+        # ISS-06: a numeric/money requirement with NO parity_hints must FAIL
+        # GATE_1 — else COMP-3 precision loss ships with no parity_rules signal.
+        import io
+        import contextlib
+        rg_path = os.path.join(self.test_dir, ".anti-legacy", "requirements", "requirements_graph.json")
+        bp_path = os.path.join(self.test_dir, ".anti-legacy", "requirements", "blueprint.json")
+        nfr_path = os.path.join(self.test_dir, ".anti-legacy", "requirements", "nfrs.md")
+        with open(rg_path, 'w') as f:
+            json.dump({"domains": {"Domain_A": {"entities": {}, "requirements": {
+                "REQ_1": {
+                    "title": "Interest calc", "description": "Compute interest.",
+                    "legacy_components": ["x.cbl"], "data_access": [], "dependencies": [],
+                    "business_rules": [{"id": "RULE-001",
+                                        "statement": "Compute the interest amount on the balance."}],
+                    "validations": [], "error_paths": [], "status": "active"
+                    # NO parity_hints — the gap the parity gate must catch.
+                }}}}}, f)
+        with open(bp_path, 'w') as f:
+            json.dump({"components": {}}, f)
+        with open(nfr_path, 'w') as f:
+            f.write("# NFRs")
+        runner = ValidatorRunner(self.test_dir, self.config_path, self.manifest_path)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            success = runner.run_gate("GATE_1_DESIGN")
+        self.assertFalse(success, "a money rule without parity_hints must fail GATE_1")
+        self.assertIn("parity_hints", buf.getvalue())
 
     @patch('subprocess.run')
     @patch('shutil.which')

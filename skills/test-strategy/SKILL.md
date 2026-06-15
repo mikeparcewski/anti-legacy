@@ -228,7 +228,14 @@ Write `.anti-legacy/contracts/test-strategy.md`:
 {critical precision and equality rules}
 
 ## Executable Functional Test scripts
-To execute these tests programmatically before build verification, run:
+These contracts are AUTHORED into executable acceptance tests BEFORE the build
+(shift-left) by `anti-legacy:functional-tests`, then RUN against the built target
+in `anti-legacy:target-review`.
+
+Pre-build authoring + contract runnability gate:
+`python3 .anti-legacy/run.py functional_tests author --contracts .anti-legacy/contracts --stack {target_stack} --output {target_path}/src/test/java/acceptance --report .anti-legacy/evidence/functional-authoring-report.json`
+
+Post-build execution (target-review):
 `python3 .anti-legacy/run.py test_runner --workspace {target_path} --stack {target_stack} --report .anti-legacy/evidence/functional-test-report.json`
 ```
 
@@ -284,4 +291,7 @@ python3 .anti-legacy/run.py manifest advance test-strategy
 - `.anti-legacy/evidence/functional-test-report.json` — programmatically run results from `test_runner.py`
 - git-brain: test patterns stored for reuse
 
-**Next step**: `anti-legacy:review-packet` to compile everything for human review before GATE_1.
+**Next step**: `anti-legacy:functional-tests` to author the executable acceptance
+tests from these contracts (pre-build, shift-left) and validate the contracts are
+runnable/unambiguous, then `anti-legacy:review-packet` to compile everything for
+human review before GATE_1.

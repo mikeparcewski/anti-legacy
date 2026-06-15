@@ -165,6 +165,143 @@ class TestManifestManager(unittest.TestCase):
         self.assertEqual(res.returncode, 0, f"Both gates satisfied should unblock: {res.stderr}")
         self.assertEqual(self._load_manifest()["phase"]["current"], "uat")
 
+    # ------------------------------------------------------------------
+    # B1a: generalized gate kick-back + new phase wiring
+    # ------------------------------------------------------------------
+
+    def test_new_phases_are_legal_advance_targets(self):
+        """B1a: the three new phases (functional-tests, document, final-review) are in the
+        phase enum and can be advanced to."""
+        self._run("init", "--name", "test")
+        for phase in ("functional-tests", "document", "final-review"):
+            res = self._run("advance", phase)
+            self.assertEqual(res.returncode, 0,
+                             f"Advancing to new phase {phase!r} should succeed: {res.stderr}")
+            self.assertEqual(self._load_manifest()["phase"]["current"], phase)
+
+    def test_failed_gate_kicks_back_to_producing_phase(self):
+        """B1a: recording a gate FAILED resets phase.current to that gate's producing phase,
+        exits non-zero, and names the skill to re-run (a GUIDED reset, not auto-dispatch)."""
+        self._run("init", "--name", "test")
+
+        # Park the pipeline at the GATE_1 parking phase, then fail the gate.
+        self._run("advance", "gate-design-review")
+        res = self._run("gate", "GATE_1_DESIGN", "--opinion", "failed",
+                        "--evaluator", "architect", "--rationale", "wrong nodes")
+        self.assertNotEqual(res.returncode, 0,
+                            "A failed gate must exit non-zero so callers can branch.")
+
+        m = self._load_manifest()
+        # Phase reset to the producing phase of GATE_1 (graph-translate), not the gate phase.
+        self.assertEqual(m["phase"]["current"], "graph-translate")
+        # The gate decision is still recorded as failed.
+        self.assertEqual(m["gates"]["GATE_1_DESIGN"]["status"], "failed")
+        # A blocked_reason names the reset and re-run guidance.
+        self.assertIn("GATE_1_DESIGN", m["phase"].get("blocked_reason", ""))
+        self.assertIn("graph-translate", m["phase"].get("blocked_reason", ""))
+        # The guidance on stderr names the producing skill (guided, not auto-dispatched).
+        self.assertIn("anti-legacy:graph-translator", res.stderr)
+        self.assertIn("KICK-BACK", res.stderr)
+
+    def test_failed_gate_kickback_clears_completed_producing_phase(self):
+        """B1a: if the producing phase had already completed, kick-back removes it from
+        `completed` so the pipeline genuinely re-enters it."""
+        self._run("init", "--name", "test")
+
+        # Walk past the producing phase so it lands in `completed`.
+        self._run("advance", "graph-translate")
+        self._run("advance", "blueprint")
+        self.assertIn("graph-translate", self._load_manifest()["phase"]["completed"])
+
+        res = self._run("gate", "GATE_1_DESIGN", "--opinion", "failed",
+                        "--evaluator", "architect", "--rationale", "redo translation")
+        self.assertNotEqual(res.returncode, 0)
+        m = self._load_manifest()
+        self.assertEqual(m["phase"]["current"], "graph-translate")
+        self.assertNotIn("graph-translate", m["phase"]["completed"])
+
+    def test_failed_gate_kickback_applies_to_all_gates(self):
+        """B1a: kick-back is generalized — each gate resets to its own producing phase."""
+        cases = {
+            "GATE_2_PLAN": "planning",
+            "GATE_3_BUILD": "build",
+            "GATE_3B_SEMANTIC": "semantic-validation",
+            "GATE_4_UAT": "uat",
+            "GATE_5_COMPLETENESS": "document",
+        }
+        for gate_id, producing_phase in cases.items():
+            self._run("init", "--name", "test", "--force")
+            res = self._run("gate", gate_id, "--opinion", "failed",
+                            "--evaluator", "reviewer", "--rationale", "needs rework")
+            self.assertNotEqual(res.returncode, 0,
+                                f"{gate_id} failed should exit non-zero: {res.stdout}{res.stderr}")
+            m = self._load_manifest()
+            self.assertEqual(m["phase"]["current"], producing_phase,
+                             f"{gate_id} should reset phase to {producing_phase}")
+            self.assertEqual(m["gates"][gate_id]["status"], "failed")
+
+    def test_gate5_completeness_recordable_and_kicks_back(self):
+        """B1a: GATE_5_COMPLETENESS is a recordable gate even on a template-minted manifest
+        that predates it; a FAIL kicks back to the document phase, a clean PASS does not."""
+        self._run("init", "--name", "test")
+
+        # FAILED -> recorded + kick-back to `document`, non-zero exit.
+        res = self._run("gate", "GATE_5_COMPLETENESS", "--opinion", "failed",
+                        "--evaluator", "anti-legacy:final-review", "--rationale", "missing docs")
+        self.assertNotEqual(res.returncode, 0)
+        m = self._load_manifest()
+        self.assertEqual(m["gates"]["GATE_5_COMPLETENESS"]["status"], "failed")
+        self.assertEqual(m["phase"]["current"], "document")
+
+        # A clean PASS with registered evidence does NOT reset the phase.
+        self._run("advance", "final-review")
+        self._write_evidence("completeness_report.json", '{"status": "PASS"}')
+        self._run("register", "completeness-report", "--path", "completeness_report.json",
+                  "--format", "json", "--produced-by", "anti-legacy:final-review", "--status", "final")
+        res = self._run("gate", "GATE_5_COMPLETENESS", "--opinion", "passed",
+                        "--evaluator", "anti-legacy:final-review", "--evidence", "completeness-report")
+        self.assertEqual(res.returncode, 0, f"Clean PASS should succeed: {res.stderr}")
+        self.assertEqual(self._load_manifest()["phase"]["current"], "final-review")
+
+    def test_final_review_advance_precondition_requires_gate5(self):
+        """B1a: leaving `final-review` requires GATE_5_COMPLETENESS passed/waived."""
+        self._run("init", "--name", "test")
+        self._run("advance", "final-review")
+
+        # Pending -> blocked.
+        res = self._run("advance", "complete")
+        self.assertEqual(res.returncode, 2, f"Pending GATE_5 should block exit: {res.stderr}")
+        self.assertEqual(self._load_manifest()["phase"]["current"], "final-review")
+
+        # Waiving satisfies the precondition.
+        res = self._run("gate", "GATE_5_COMPLETENESS", "--opinion", "waived",
+                        "--evaluator", "human", "--rationale", "accepted")
+        self.assertEqual(res.returncode, 0, f"Waive failed: {res.stderr}")
+        res = self._run("advance", "complete")
+        self.assertEqual(res.returncode, 0, f"Leaving after waive should succeed: {res.stderr}")
+        self.assertEqual(self._load_manifest()["phase"]["current"], "complete")
+
+    def test_passed_and_waived_gates_do_not_kick_back(self):
+        """B1a: passed/waived behavior is unchanged — neither resets the phase nor exits
+        non-zero."""
+        self._run("init", "--name", "test")
+        self._run("advance", "gate-plan-review")
+
+        # WAIVED stays put.
+        res = self._run("gate", "GATE_2_PLAN", "--opinion", "waived",
+                        "--evaluator", "human", "--rationale", "ok")
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(self._load_manifest()["phase"]["current"], "gate-plan-review")
+
+        # PASSED (with clean evidence) stays put.
+        self._write_evidence("task.md", "# plan\n")
+        self._run("register", "task-plan", "--path", "task.md", "--format", "markdown",
+                  "--produced-by", "anti-legacy:planner", "--status", "final")
+        res = self._run("gate", "GATE_2_PLAN", "--opinion", "passed",
+                        "--evaluator", "pm", "--evidence", "task-plan")
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(self._load_manifest()["phase"]["current"], "gate-plan-review")
+
     def test_register_artifact(self):
         """Register records artifact metadata and checksum.
 

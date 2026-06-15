@@ -11,6 +11,13 @@ from datetime import datetime, timezone
 # rule-level coverage instead of mere class-name existence.
 _RULE_ID_RE = r'(?:RULE|VAL|ERR)-\d+'
 
+# Optional package/namespace qualifier in front of an annotation/attribute name.
+# A developer may write the annotation either bare (`@ImplementsRule(...)`) or
+# fully-qualified (`@com.carddemo.util.ImplementsRule(...)`); both must match.
+# The trailing dot is required so the qualifier only consumes a real prefix
+# (`com.carddemo.util.`) and never the annotation simple-name itself.
+_PKG_QUALIFIER_RE = r'(?:[A-Za-z_][A-Za-z0-9_]*\.)*'
+
 # Per-language configuration. Each entry describes how to find source files,
 # how to derive a symbol/class name, the source roots to probe under
 # target_path, and the WEAK-tier rule-id evidence anchors (annotation/attribute
@@ -28,7 +35,8 @@ _LANG_CONFIG = {
         "src_roots": ("src/main/java",),
         "skip_files": ("Application.java",),
         "annotation": re.compile(
-            r'@(?:ImplementsRule|SatisfiesRule)\(\s*"(' + _RULE_ID_RE + r')"'
+            r'@' + _PKG_QUALIFIER_RE
+            + r'(?:ImplementsRule|SatisfiesRule)\(\s*"(' + _RULE_ID_RE + r')"'
         ),
         "comment": re.compile(r'//\s*(' + _RULE_ID_RE + r')\b'),
     },
@@ -37,7 +45,8 @@ _LANG_CONFIG = {
         "src_roots": ("src/main/kotlin",),
         "skip_files": ("Application.kt",),
         "annotation": re.compile(
-            r'@(?:ImplementsRule|SatisfiesRule)\(\s*"(' + _RULE_ID_RE + r')"'
+            r'@' + _PKG_QUALIFIER_RE
+            + r'(?:ImplementsRule|SatisfiesRule)\(\s*"(' + _RULE_ID_RE + r')"'
         ),
         "comment": re.compile(r'//\s*(' + _RULE_ID_RE + r')\b'),
     },
@@ -67,7 +76,8 @@ _LANG_CONFIG = {
         "src_roots": ("src", "."),
         "skip_files": (),
         "annotation": re.compile(
-            r'\[\s*(?:ImplementsRule|SatisfiesRule)\(\s*"(' + _RULE_ID_RE + r')"'
+            r'\[\s*' + _PKG_QUALIFIER_RE
+            + r'(?:ImplementsRule|SatisfiesRule)\(\s*"(' + _RULE_ID_RE + r')"'
         ),
         "comment": re.compile(r'//\s*(' + _RULE_ID_RE + r')\b'),
     },

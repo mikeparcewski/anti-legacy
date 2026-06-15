@@ -303,5 +303,272 @@ class TestAgainstRealBinary(unittest.TestCase):
         self.assertEqual(int(result.get("files")), 1)
 
 
+# ---------------------------------------------------------------------------
+# ISS-12 (legacy-graph digest drift gate): drift() recomputes the current
+# deterministic digest and compares it — by SHA-256 AND line-by-line — to a
+# registered baseline (a digest-file path, raw digest text, or a 64-hex checksum).
+# A no-drift case returns drift=False; a changed-graph case returns drift=True and
+# the per-line `changed` detail; the CLI exits 2 on drift so the gate BLOCKS.
+#
+# SHIM-LEVEL: monkeypatch we.stats_digest so the drift comparison runs against a
+# hand-built current digest with NO binary present (the comparison logic is the
+# unit under test, not the engine).
+# ---------------------------------------------------------------------------
+@unittest.skipIf(we is None, f"scripts/wicked_estate.py not importable yet: {HELPER_IMPORT_ERROR}")
+class TestDriftDigestComparison(unittest.TestCase):
+    """drift() composes the digest primitive into a structured drift verdict."""
+
+    # A canonical digest as stats_digest() would emit (volatile lines already stripped).
+    DIGEST_V1 = (
+        "nodes=84 edges=101 files=1\n"
+        'edge "calls" = 18\n'
+        'edge "contains" = 83\n'
+    )
+    # Same graph, one extra `calls` edge (a code change that re-indexing would record).
+    DIGEST_V2 = (
+        "nodes=84 edges=102 files=1\n"
+        'edge "calls" = 19\n'
+        'edge "contains" = 83\n'
+    )
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="we-drift-shim-")
+        self._orig_stats_digest = we.stats_digest
+
+    def tearDown(self):
+        we.stats_digest = self._orig_stats_digest
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _set_current(self, digest_text):
+        """Stub stats_digest(db) -> the given current digest. drift() calls it to
+        recompute the current state; nothing touches the engine."""
+        def fake_stats_digest(db_or_text=we.DEFAULT_DB, binary=None):
+            return digest_text
+        we.stats_digest = fake_stats_digest
+
+    def _write_baseline_file(self, digest_text, name="legacy-graph.digest.txt"):
+        path = os.path.join(self.tmpdir, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(digest_text)
+        return path
+
+    def test_clean_case_no_drift_against_digest_file(self):
+        """Current digest == the registered baseline file -> drift=False, changed=[]."""
+        self._set_current(self.DIGEST_V1)
+        base = self._write_baseline_file(self.DIGEST_V1)
+        v = we.drift("ignored.db", base)
+        self.assertFalse(v["drift"], f"identical digest must not drift; got {v!r}")
+        self.assertEqual(v["changed"], [])
+        self.assertEqual(v["current_checksum"], v["baseline_checksum"])
+        self.assertEqual(v["baseline_kind"], "digest")
+
+    def test_clean_case_no_drift_against_checksum(self):
+        """A bare 64-hex checksum baseline that matches the current digest -> no drift."""
+        self._set_current(self.DIGEST_V1)
+        chk = we._digest_checksum(we._canonicalize_stats(self.DIGEST_V1))
+        v = we.drift("ignored.db", chk)
+        self.assertFalse(v["drift"])
+        self.assertEqual(v["baseline_kind"], "checksum")
+        self.assertEqual(v["changed"], [])  # no line detail for a bare checksum
+
+    def test_changed_graph_reports_drift_and_changed_lines(self):
+        """Current digest differs from the baseline -> drift=True + the exact
+        count facts that changed (paired on stem, not shown as add+remove)."""
+        self._set_current(self.DIGEST_V2)
+        base = self._write_baseline_file(self.DIGEST_V1)
+        v = we.drift("ignored.db", base)
+        self.assertTrue(v["drift"], "a re-indexed graph that differs must report drift")
+        self.assertNotEqual(v["current_checksum"], v["baseline_checksum"])
+        # Two facts moved: the count header (edges 101->102) and edge "calls" (18->19).
+        changed_pairs = {(c["baseline"], c["current"]) for c in v["changed"]}
+        self.assertIn(
+            ("nodes=84 edges=101 files=1", "nodes=84 edges=102 files=1"),
+            changed_pairs,
+        )
+        self.assertIn(('edge "calls" = 18', 'edge "calls" = 19'), changed_pairs)
+        # The unchanged `contains` edge is NOT reported.
+        for c in v["changed"]:
+            self.assertNotIn("contains", str(c["baseline"]) + str(c["current"]))
+
+    def test_changed_against_checksum_reports_drift_without_line_detail(self):
+        """A bare checksum baseline still detects drift (checksum mismatch) but
+        yields no per-line detail (only the digest text can be line-diffed)."""
+        self._set_current(self.DIGEST_V2)
+        stale_chk = we._digest_checksum(we._canonicalize_stats(self.DIGEST_V1))
+        v = we.drift("ignored.db", stale_chk)
+        self.assertTrue(v["drift"])
+        self.assertEqual(v["baseline_kind"], "checksum")
+        self.assertEqual(v["changed"], [])
+
+    def test_added_and_removed_edge_kinds_are_reported(self):
+        """A new edge kind appears / an old one vanishes -> each shows as a one-sided
+        change ({baseline:None,...} added / {...,current:None} removed)."""
+        self._set_current(
+            "nodes=84 edges=101 files=1\n"
+            'edge "calls" = 18\n'
+            'edge "invokes" = 83\n'   # 'contains' renamed-away -> removed; 'invokes' added
+        )
+        base = self._write_baseline_file(self.DIGEST_V1)
+        v = we.drift("ignored.db", base)
+        self.assertTrue(v["drift"])
+        kinds = {(c["baseline"], c["current"]) for c in v["changed"]}
+        self.assertIn(('edge "contains" = 83', None), kinds)      # removed
+        self.assertIn((None, 'edge "invokes" = 83'), kinds)       # added
+
+    def test_empty_against_raises(self):
+        """An empty --against baseline is a clear error, not a silent pass."""
+        self._set_current(self.DIGEST_V1)
+        with self.assertRaises(we.WickedEstateError):
+            we.drift("ignored.db", "")
+
+    def test_garbage_against_raises(self):
+        """A baseline that is neither a file, digest text, nor a checksum raises."""
+        self._set_current(self.DIGEST_V1)
+        with self.assertRaises(we.WickedEstateError):
+            we.drift("ignored.db", "this-is-not-a-digest-or-checksum")
+
+    def test_drift_verdict_is_deterministic(self):
+        """Same inputs -> identical verdict (no embedded randomness/timestamps)."""
+        self._set_current(self.DIGEST_V2)
+        base = self._write_baseline_file(self.DIGEST_V1)
+        self.assertEqual(we.drift("ignored.db", base), we.drift("ignored.db", base))
+
+
+@unittest.skipIf(we is None, f"scripts/wicked_estate.py not importable yet: {HELPER_IMPORT_ERROR}")
+class TestDriftCliExitCodes(unittest.TestCase):
+    """The `drift` CLI exits 0 (clean), 2 (drift), 1 (error) — the gate's signal."""
+
+    DIGEST = (
+        "nodes=5 edges=4 files=1\n"
+        'edge "calls" = 2\n'
+        'edge "contains" = 2\n'
+    )
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="we-drift-cli-")
+        self._orig_stats_digest = we.stats_digest
+
+        def fake_stats_digest(db_or_text=we.DEFAULT_DB, binary=None):
+            return self.DIGEST
+        we.stats_digest = fake_stats_digest
+
+    def tearDown(self):
+        we.stats_digest = self._orig_stats_digest
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _baseline(self, text):
+        path = os.path.join(self.tmpdir, "baseline.digest.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def test_cli_exit_0_on_no_drift(self):
+        """`drift --against <matching digest>` exits 0."""
+        base = self._baseline(self.DIGEST)
+        rc = we.main(["drift", "--db", "ignored.db", "--against", base])
+        self.assertEqual(rc, 0)
+
+    def test_cli_exit_2_on_drift(self):
+        """`drift --against <stale digest>` exits 2 (the BLOCK signal for CI/gate)."""
+        stale = self._baseline(self.DIGEST.replace("edges=4", "edges=99"))
+        rc = we.main(["drift", "--db", "ignored.db", "--against", stale])
+        self.assertEqual(rc, 2)
+
+    def test_cli_exit_1_on_bad_against(self):
+        """A malformed --against is a helper error -> exit 1 (distinct from 0/2)."""
+        rc = we.main(["drift", "--db", "ignored.db", "--against", "garbage"])
+        self.assertEqual(rc, 1)
+
+
+# ---------------------------------------------------------------------------
+# ISS-12 NATIVE: real-engine drift round-trip. Build a tiny DB, register its
+# digest as the baseline, then re-index a CHANGED source and confirm drift() flips.
+# ---------------------------------------------------------------------------
+@unittest.skipIf(we is None, f"scripts/wicked_estate.py not importable yet: {HELPER_IMPORT_ERROR}")
+@unittest.skipIf(BINARY is None, "wicked-estate binary not available")
+class TestDriftAgainstRealBinary(unittest.TestCase):
+    """drift() round-trip against a real indexed DB + its registered digest seam."""
+
+    SRC_V1 = "def alpha(x):\n    return beta(x) + 1\n\n\ndef beta(y):\n    return y * 2\n"
+    # Adds a third function -> more nodes -> the canonical digest changes.
+    SRC_V2 = (
+        "def alpha(x):\n    return beta(x) + 1\n\n\n"
+        "def beta(y):\n    return y * 2\n\n\n"
+        "def gamma(z):\n    return alpha(z) + beta(z)\n"
+    )
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="we-drift-real-")
+        self.src = os.path.join(self.tmpdir, "src")
+        os.makedirs(self.src, exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _index(self, body, db_name):
+        with open(os.path.join(self.src, "main.py"), "w") as f:
+            f.write(body)
+        db = os.path.join(self.tmpdir, db_name)
+        subprocess.run(
+            [BINARY, "index", self.src, "--db", db],
+            capture_output=True, text=True, check=True,
+        )
+        return db
+
+    def test_no_drift_when_digest_matches_registered_baseline(self):
+        """Register the v1 digest, re-index the SAME source -> drift() reports no drift."""
+        db_v1 = self._index(self.SRC_V1, "v1.db")
+        digest = we.stats_digest(db_v1, binary=BINARY)
+        baseline_path = os.path.join(self.tmpdir, "legacy-graph.digest.txt")
+        with open(baseline_path, "w", encoding="utf-8") as f:
+            f.write(digest)
+
+        db_v1b = self._index(self.SRC_V1, "v1b.db")  # identical source, fresh DB
+        v = we.drift(db_v1b, baseline_path, binary=BINARY)
+        self.assertFalse(v["drift"], f"identical graph must not drift; got {v!r}")
+        self.assertEqual(v["changed"], [])
+
+    def test_drift_when_code_changes_after_annotation(self):
+        """Register v1 digest (the seam annotations were written against), then the
+        code changes (a new function) and the graph is re-indexed -> drift()=True with
+        the changed count facts. This is the §I6 stale-annotation block."""
+        db_v1 = self._index(self.SRC_V1, "v1.db")
+        digest_v1 = we.stats_digest(db_v1, binary=BINARY)
+        baseline_path = os.path.join(self.tmpdir, "legacy-graph.digest.txt")
+        with open(baseline_path, "w", encoding="utf-8") as f:
+            f.write(digest_v1)
+
+        db_v2 = self._index(self.SRC_V2, "v2.db")  # code changed: +gamma
+        v = we.drift(db_v2, baseline_path, binary=BINARY)
+        self.assertTrue(v["drift"], f"a changed graph must drift; got {v!r}")
+        self.assertNotEqual(v["current_checksum"], v["baseline_checksum"])
+        self.assertTrue(v["changed"], "drift must enumerate the changed digest facts")
+
+    def test_drift_against_bare_checksum_baseline(self):
+        """drift() accepts the registered 64-hex SHA-256 (the manifest stores exactly
+        this for the `legacy-graph` artifact) and detects a stale checksum."""
+        db_v1 = self._index(self.SRC_V1, "v1.db")
+        chk_v1 = we._digest_checksum(we.stats_digest(db_v1, binary=BINARY))
+        # Same source, fresh DB -> checksum still matches -> no drift.
+        db_v1b = self._index(self.SRC_V1, "v1b.db")
+        self.assertFalse(we.drift(db_v1b, chk_v1, binary=BINARY)["drift"])
+        # Changed source -> checksum mismatch -> drift.
+        db_v2 = self._index(self.SRC_V2, "v2.db")
+        v = we.drift(db_v2, chk_v1, binary=BINARY)
+        self.assertTrue(v["drift"])
+        self.assertEqual(v["baseline_kind"], "checksum")
+
+    def test_cli_exits_2_on_real_drift(self):
+        """The `drift` CLI over a real DB exits 2 when the graph drifted from baseline."""
+        db_v1 = self._index(self.SRC_V1, "v1.db")
+        digest_v1 = we.stats_digest(db_v1, binary=BINARY)
+        baseline_path = os.path.join(self.tmpdir, "legacy-graph.digest.txt")
+        with open(baseline_path, "w", encoding="utf-8") as f:
+            f.write(digest_v1)
+        db_v2 = self._index(self.SRC_V2, "v2.db")
+        rc = we.main(["drift", "--db", db_v2, "--against", baseline_path])
+        self.assertEqual(rc, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

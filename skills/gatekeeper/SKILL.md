@@ -2,11 +2,13 @@
 name: "anti-legacy:gatekeeper"
 description: >
   Enforce transition gates. Verify that required sign-offs and evidence exist before
-  the pipeline can advance. Seven gates: GATE_0_DISCOVERY (automated survey integrity),
+  the pipeline can advance. Eight gates: GATE_0_DISCOVERY (automated survey integrity),
   GATE_1_DESIGN (design review), GATE_1B_SEMANTIC_JOIN (semantic-join review),
   GATE_2_PLAN (plan review), GATE_3_BUILD (automated build integrity + round-trip
   rule-coverage), GATE_3B_SEMANTIC (semantic validation review), GATE_4_UAT
-  (UAT acceptance, reviewer-independence enforced).
+  (UAT acceptance, reviewer-independence enforced), GATE_5_COMPLETENESS (automated
+  final completeness gate). A `failed` opinion on any gate triggers a generalized,
+  guided kick-back that rewinds the pipeline to the gate's producing phase.
   Blocks pipeline execution if any required gate is not cleared.
   Use when: "check gate status", "verify gate 1", "can we proceed to build",
   "has the design been signed off", "record a sign-off", "gate check".
@@ -24,20 +26,46 @@ and Windows Git Bash. Evidence verification uses `manifest.py check`.
 
 ## Parameters
 
-- **gate_id** (required): one of `GATE_0_DISCOVERY`, `GATE_1_DESIGN`, `GATE_1B_SEMANTIC_JOIN`, `GATE_2_PLAN`, `GATE_3_BUILD`, `GATE_3B_SEMANTIC`, `GATE_4_UAT`
+- **gate_id** (required): one of `GATE_0_DISCOVERY`, `GATE_1_DESIGN`, `GATE_1B_SEMANTIC_JOIN`, `GATE_2_PLAN`, `GATE_3_BUILD`, `GATE_3B_SEMANTIC`, `GATE_4_UAT`, `GATE_5_COMPLETENESS`
 - **action**: `check` (default) — verify gate status | `record` — record a sign-off | `status` — print all gates
 
 ## Gate Definitions
 
 | Gate | When | Required Evidence | Who Signs |
 |------|------|-------------------|-----------|
-| `GATE_0_DISCOVERY` | After survey | project name + target stack + non-empty legacy imports | Automated — no human required |
-| `GATE_1_DESIGN` | After review-packet | review-packet, requirements-graph, blueprint-json, roundtrip-coverage | Lead Architect + Tech Lead |
+| `GATE_0_DISCOVERY` | After survey | project name + target stack + non-empty legacy imports + legacy-graph digest seam written | Automated — no human required |
+| `GATE_1_DESIGN` | After review-packet | review-packet, requirements-graph, blueprint-json, roundtrip-coverage, legacy-graph digest not DRIFTED | Lead Architect + Tech Lead |
 | `GATE_1B_SEMANTIC_JOIN`| After semantic-join | semantic_join_report.md + gate status passed | Lead Architect + Tech Lead |
 | `GATE_2_PLAN` | After planner | task-plan, blueprint-json | PM + Tech Lead |
 | `GATE_3_BUILD` | After target-review | build-integrity (PASS) + functional-comparison-report (0 FAIL, coverage>=1.0) | Automated — no human required |
 | `GATE_3B_SEMANTIC`| After semantic-validation| semantic-validation-report | Lead Architect + Tech Lead |
 | `GATE_4_UAT` | After uat-crew | uat-summary, uat-verdicts (both registered by uat-crew) | UAT Lead (independent of architect — HARD FAIL if same) |
+| `GATE_5_COMPLETENESS` | After document, at `final-review` | completeness-report (status PASS) | Automated — no human required |
+
+## Generalized gate kick-back (failed opinion)
+
+Recording any gate `failed` (`manifest gate <ID> --opinion failed`) does not just stamp
+the gate — `manifest.py` performs a **guided kick-back**: it resets `phase.current` back
+to that gate's producing phase (`GATE_PRODUCING_PHASE` in `manifest.py`, the inverse of
+the advance-precondition map), drops that phase from `completed`, writes a `blocked_reason`,
+appends an `anti-legacy:gate-kicked-back` audit event, prints the producing skill to re-run,
+and exits **non-zero (code 3)** so the orchestrator/CI can branch. It is a GUIDED reset — it
+names the skill but does NOT auto-dispatch it. This applies to ALL gates:
+
+| Gate failed | Pipeline resets to phase | Re-run skill |
+|---|---|---|
+| `GATE_0_DISCOVERY` | `survey` | `anti-legacy:survey` |
+| `GATE_1_DESIGN` | `graph-translate` | `anti-legacy:graph-translator` |
+| `GATE_1B_SEMANTIC_JOIN` | `semantic-join` | `anti-legacy:semantic-join` |
+| `GATE_2_PLAN` | `planning` | `anti-legacy:planner` |
+| `GATE_3_BUILD` | `build` | `anti-legacy:swarm` |
+| `GATE_3B_SEMANTIC` | `semantic-validation` | `anti-legacy:semantic-validation` |
+| `GATE_4_UAT` | `uat` | `anti-legacy:uat-crew` |
+| `GATE_5_COMPLETENESS` | `document` | `anti-legacy:document` |
+
+`passed`/`waived` never reset the phase. A `failed` GATE_1 whose rationale names specific
+requirement nodes is still a targeted re-run (graph-translator re-runs for the named nodes
+only) — the kick-back rewinds the phase; the producing skill narrows the scope.
 
 ## Action: status — Show all gate states
 
@@ -60,6 +88,44 @@ Look for the `Gates:` section and display each gate's status, evaluator, and tim
 
 ## Action: check — Verify a gate is cleared
 
+### Shared check: legacy-graph digest drift (ISS-12)
+
+The §I6 keystone: rule annotations are written against a graph whose deterministic
+stats digest was checksummed and registered as the `legacy-graph` evidence at survey
+time. If the legacy CODE changes and the graph is re-indexed WITHOUT re-running
+extraction, those annotations are STALE — and that staleness is checksum-detectable.
+This is **not a new human gate**; it is an automated checksum CHECK reused by the
+gates below (GATE_0 post-survey, GATE_1 pre-design). It composes the existing
+`stats-digest` primitive — it never re-implements the comparison.
+
+The committed seam is `.anti-legacy/legacy-graph.digest.txt` (the deterministic
+digest survey writes and extraction re-writes post-annotation). The check recomputes
+the CURRENT digest from the live graph DB and compares it to the registered baseline:
+
+```bash
+# DB = the per-app graph the survey indexed (under .anti-legacy/graphs/); baseline =
+# the committed digest seam (or pass the manifest's registered legacy-graph checksum).
+python3 .anti-legacy/run.py wicked_estate drift \
+  --db .anti-legacy/graphs/<app>.db \
+  --against .anti-legacy/legacy-graph.digest.txt
+```
+
+Exit codes are the gate signal: **0** = no drift (annotations match the current
+graph), **2** = DRIFT (the graph changed since the digest was registered — annotations
+are stale), **1** = check error (bad `--against`/missing DB). On exit 2 the verdict
+JSON's `changed` array names the exact digest facts (node/edge counts, edge kinds)
+that moved.
+
+If `drift` exits **2** → halt: `BLOCKED — legacy-graph drift: the code graph changed
+since the digest was registered; re-run extraction to re-annotate the changed nodes
+(then survey/extraction re-write the digest seam) before advancing`. Exit **0** →
+the drift check passes.
+
+> The baseline may also be given as the manifest's registered checksum instead of the
+> file: `--against $(python3 -c "import json;print(json.load(open('.anti-legacy/manifest.json'))['artifacts']['legacy-graph']['checksum'])")`.
+> With a bare checksum the verdict has no per-line `changed` detail (checksum-only),
+> but the drift bool + exit code are identical.
+
 ### For GATE_0_DISCOVERY
 
 Verifies the survey produced a real discovery (project name + target stack +
@@ -71,6 +137,12 @@ python3 .anti-legacy/run.py validator_discovery run --gate GATE_0_DISCOVERY
 
 If the validator exits non-zero → halt: `GATE_0_DISCOVERY: BLOCKED — {reason}`.
 Otherwise → `GATE_0_DISCOVERY: CLEARED ✓`.
+
+> **Note:** at GATE_0 (immediately post-survey) the digest seam was just written, so
+> the drift check is trivially clean — its value is at GATE_1 (below), where it catches
+> a graph that changed AFTER annotation. Run it here only to confirm the seam was
+> written: a missing `.anti-legacy/legacy-graph.digest.txt` (drift exits 1) means survey
+> did not register the seam.
 
 ### For GATE_1B_SEMANTIC_JOIN
 
@@ -117,6 +189,14 @@ the gate status is not `passed` → halt: `GATE_1B_SEMANTIC_JOIN: BLOCKED — {r
    ```bash
    python3 .anti-legacy/run.py validator_discovery run --gate GATE_1_DESIGN
    ```
+
+4b. Run the legacy-graph drift check (ISS-12) — the annotations the requirements graph is built on MUST still match the indexed code. A non-zero (exit 2) means the graph changed since extraction registered the digest; the annotations are stale and the design is built on sand:
+   ```bash
+   python3 .anti-legacy/run.py wicked_estate drift \
+     --db .anti-legacy/graphs/<app>.db \
+     --against .anti-legacy/legacy-graph.digest.txt
+   ```
+   Exit 0 → no drift, continue. Exit 2 → halt: `GATE_1_DESIGN: BLOCKED — legacy-graph drift; re-run extraction to re-annotate the changed nodes before this gate`. (See the shared **legacy-graph digest drift** check above for the verdict shape and the checksum-baseline alternative.)
 
 5. Verify the disposition-aware round-trip evidence is registered and complete — every legacy rule is represented OR explicitly dropped-with-reason (ISS-10):
    ```bash
@@ -346,6 +426,57 @@ NOT record the gate → `GATE_3_BUILD: BLOCKED — {reason}` and re-dispatch
 
 If MINOR findings are accepted (not fixed), the rationale must name them, e.g. `--rationale "Accepted UAT-003 (logging, MINOR) — tracked in #12. All CRITICAL/MAJOR clear."`
 
+### For GATE_5_COMPLETENESS (automated)
+
+GATE_5 is the final completeness gate at the `final-review` phase. It is automated —
+no human sign-off required. It auto-clears when the `final-review` phase has produced a
+`completeness-report` artifact whose top-level `status` is `PASS`, and kicks back to the
+`document` phase on a FAIL (the generalized kick-back above). The producing skill/script
+for the report (`anti-legacy:final-review` / its `completeness-report` writer) is built
+separately; the gatekeeper only verifies the evidence here.
+
+1. Verify the completeness report exists and reports `PASS`:
+   ```bash
+   python3 -c "
+   import json, os, sys
+   p = '.anti-legacy/evidence/completeness_report.json'
+   if not os.path.isfile(p):
+       print('BLOCKED: completeness_report.json missing — anti-legacy:final-review must write it before GATE_5_COMPLETENESS can clear')
+       sys.exit(1)
+   r = json.load(open(p))
+   status = str(r.get('status', '')).upper()
+   if status != 'PASS':
+       print(f'BLOCKED: completeness-report status is {status!r} (must be PASS) — re-run anti-legacy:document then anti-legacy:final-review')
+       sys.exit(1)
+   print('Completeness OK: status=PASS')
+   "
+   ```
+
+2. Verify the registered artifact checksum:
+   ```bash
+   python3 .anti-legacy/run.py manifest check completeness-report
+   ```
+
+If the report is PASS and the checksum verifies → auto-record the gate (the evaluator is
+the producing skill, the gate is only reachable because the completeness evidence passed):
+```bash
+python3 .anti-legacy/run.py manifest gate GATE_5_COMPLETENESS \
+  --opinion passed \
+  --evaluator "anti-legacy:final-review" \
+  --rationale "Automated completeness check passed (completeness-report status: PASS)" \
+  --evidence "completeness-report"
+```
+
+If the report is missing or status is not PASS → do NOT record passed; record `failed`
+(which kicks back to the `document` phase) and re-run `anti-legacy:document`:
+```bash
+python3 .anti-legacy/run.py manifest gate GATE_5_COMPLETENESS \
+  --opinion failed \
+  --evaluator "anti-legacy:final-review" \
+  --rationale "Completeness check FAILED — {reason}"
+# ^ exits non-zero (code 3) and resets phase.current to 'document'
+```
+
 ## Action: record — Record a manual sign-off
 
 ```bash
@@ -382,7 +513,8 @@ Report to the user what phase comes next after the cleared gate:
 | Gate Cleared | Next Phase |
 |---|---|
 | GATE_1_DESIGN | `anti-legacy:planner` |
-| GATE_2_PLAN | `anti-legacy:swarm` |
+| GATE_2_PLAN | `functional-tests` (blocking pre-build validation), then `anti-legacy:swarm` |
 | GATE_3_BUILD | `anti-legacy:semantic-validation` |
 | GATE_3B_SEMANTIC| `anti-legacy:uat-crew` |
-| GATE_4_UAT | `anti-legacy:deploy` |
+| GATE_4_UAT | `document`, then `final-review` (GATE_5_COMPLETENESS) |
+| GATE_5_COMPLETENESS | `anti-legacy:deploy` |

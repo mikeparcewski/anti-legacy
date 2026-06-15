@@ -51,12 +51,15 @@
             "gate-design-review",
             "planning",
             "gate-plan-review",
+            "functional-tests",
             "build",
             "target-review",
             "semantic-validation",
             "gate-build-integrity",
             "uat",
             "gate-uat-signoff",
+            "document",
+            "final-review",
             "complete"
           ],
           "description": "The current pipeline phase. The agent reads this to know where it is."

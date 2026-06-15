@@ -2,10 +2,10 @@
 name: orchestrate
 description: >-
   Master orchestrator for the anti-legacy pipeline.
-  Sequences all 13 phases (plus an optional semantic-join phase for multi-repo
-  surveys), enforces all seven gates (GATE_0_DISCOVERY, GATE_1_DESIGN,
+  Sequences all 16 phases (plus an optional semantic-join phase for multi-repo
+  surveys), enforces all eight gates (GATE_0_DISCOVERY, GATE_1_DESIGN,
   GATE_1B_SEMANTIC_JOIN, GATE_2_PLAN, GATE_3_BUILD, GATE_3B_SEMANTIC,
-  GATE_4_UAT), and resumes from wherever it left off.
+  GATE_4_UAT, GATE_5_COMPLETENESS), and resumes from wherever it left off.
   Start here — this skill dispatches everything else.
 ---
 
@@ -14,14 +14,28 @@ description: >-
 Master entry point for the anti-legacy modernization pipeline. Sequences all
 phases, enforces gates, and resumes from the current manifest state.
 
-There are **seven gates** total, matching `anti-legacy:gatekeeper`'s enumeration:
+There are **eight gates** total, matching `anti-legacy:gatekeeper`'s enumeration:
 `GATE_0_DISCOVERY` (automated, after survey), `GATE_1_DESIGN`, `GATE_1B_SEMANTIC_JOIN`
 (only for multi-repo semantic-join surveys), `GATE_2_PLAN`, `GATE_3_BUILD` (automated),
-`GATE_3B_SEMANTIC`, and `GATE_4_UAT`. Four of these (`GATE_1_DESIGN`, `GATE_2_PLAN`,
-`GATE_3B_SEMANTIC`, `GATE_4_UAT`) require human sign-off; the rest are automated. Every
-`--opinion passed` sign-off MUST cite `--evidence` with registered artifact ids — the
-manifest content-verifies each cited id (registered AND status not failed/pending AND
-file present AND checksum matches) and hard-fails the gate otherwise.
+`GATE_3B_SEMANTIC`, `GATE_4_UAT`, and `GATE_5_COMPLETENESS` (automated, final completeness
+gate). Four of these (`GATE_1_DESIGN`, `GATE_2_PLAN`, `GATE_3B_SEMANTIC`, `GATE_4_UAT`)
+require human sign-off; the rest are automated. Every `--opinion passed` sign-off MUST cite
+`--evidence` with registered artifact ids — the manifest content-verifies each cited id
+(registered AND status not failed/pending AND file present AND checksum matches) and
+hard-fails the gate otherwise.
+
+**Generalized gate kick-back.** Recording any gate `--opinion failed` rewinds the pipeline
+to that gate's producing phase (a guided reset — `manifest.py` resets `phase.current`,
+names the skill to re-run, and exits non-zero / code 3). It does NOT auto-dispatch the
+skill. On a non-zero `manifest gate` exit, read the printed reset target and re-run the
+named producing skill before re-presenting the gate. See `anti-legacy:gatekeeper`
+(Generalized gate kick-back) for the full per-gate phase/skill map.
+
+Three phases host the content agents' work between gates: `functional-tests` (after
+GATE_2_PLAN, before swarm — blocking pre-build validation), `document` (after GATE_4_UAT,
+before final-review — the documentation pass), and `final-review` (after document, before
+deploy — the automated GATE_5_COMPLETENESS completeness gate). Their producing skills are
+dispatched in the phase table below; this skill only sequences them.
 
 ## How to Invoke
 
@@ -303,11 +317,31 @@ When approved: python3 .anti-legacy/run.py manifest gate GATE_2_PLAN --opinion p
 
 ---
 
+### Phase 8b: Functional Tests (pre-build validation)
+
+**Skill**: built separately (content agent) — slotted at the `functional-tests` phase
+**Produces**: the pre-build functional-test artifacts (owned by that skill)
+**Blocks**: GATE_2 must be approved — this is a BLOCKING pre-build validation pass
+**Gate**: None — but it MUST pass before swarm starts building
+**Phase value**: advances `functional-tests`
+
+```
+What to do:
+1. Advance into the functional-tests phase: python3 .anti-legacy/run.py manifest advance functional-tests
+2. Run the functional-tests skill (built separately) to validate the approved plan/contracts
+   against expected behavior BEFORE any target code is written. This is the blocking
+   pre-build gate-of-discipline: a failure here means the plan is not yet buildable.
+3. Do NOT advance to `build` until this phase's done-gate is satisfied.
+4. Advance: python3 .anti-legacy/run.py manifest advance build
+```
+
+---
+
 ### Phase 9: Swarm Build
 
 **Skill**: `anti-legacy:swarm`
 **Produces**: Target source files per task.md
-**Blocks**: GATE_2 must be approved
+**Blocks**: GATE_2 must be approved AND `functional-tests` phase complete
 **Gate**: None
 
 ```
@@ -436,11 +470,63 @@ When approved: python3 .anti-legacy/run.py manifest gate GATE_4_UAT --opinion pa
 
 ---
 
+### Phase 12b: Document
+
+**Skill**: built separately (content agent) — slotted at the `document` phase
+**Produces**: the documentation artifacts (owned by that skill)
+**Blocks**: GATE_4 must be approved
+**Gate**: None — but feeds GATE_5_COMPLETENESS
+**Phase value**: advances `document`
+
+```
+What to do:
+1. Advance into the document phase: python3 .anti-legacy/run.py manifest advance document
+2. Run the document skill (built separately) to produce the target-system documentation
+   (architecture, runbook, requirement-to-code traceability, etc.).
+3. Advance: python3 .anti-legacy/run.py manifest advance final-review
+```
+
+---
+
+### Phase 12c: Final Review (GATE 5 — Completeness, Automated)
+
+**Skill**: `anti-legacy:gatekeeper` (check) + the `final-review` completeness-report writer (built separately)
+**Produces**: `evidence/completeness_report.json` (registered as `completeness-report`)
+**Blocks**: Must be at the `final-review` phase with `document` complete
+**Gate**: GATE_5_COMPLETENESS (auto-clear on `completeness-report` status: PASS; kicks back to `document` on FAIL)
+
+```
+What to do:
+1. Run the final-review completeness check (built separately), which writes
+   evidence/completeness_report.json and registers it as `completeness-report`.
+2. Auto-clear when the report status is PASS:
+   python3 .anti-legacy/run.py manifest gate GATE_5_COMPLETENESS --opinion passed --evaluator anti-legacy:final-review --evidence completeness-report
+3. On FAIL, record failed — this kicks the pipeline BACK to the `document` phase
+   (manifest resets phase.current and exits non-zero / code 3); re-run the document
+   skill, then re-present GATE_5:
+   python3 .anti-legacy/run.py manifest gate GATE_5_COMPLETENESS --opinion failed --evaluator anti-legacy:final-review --rationale "{reason}"
+4. Once GATE_5 is passed/waived, advance to deploy.
+```
+
+---
+
+### 🚧 GATE 5 — Completeness (Automated)
+
+**Auto-clears** when `evidence/completeness_report.json` has top-level `status: PASS`.
+A FAIL recorded via `--opinion failed` kicks the pipeline back to the `document` phase
+(see Generalized gate kick-back, above) — no full restart. No human intervention needed.
+
+```
+python3 .anti-legacy/run.py manifest gate GATE_5_COMPLETENESS --opinion passed --evaluator anti-legacy:final-review --evidence completeness-report
+```
+
+---
+
 ### Phase 13: Deploy
 
 **Skill**: `anti-legacy:deploy`
 **Produces**: Deployment artifacts (Dockerfile, CI config, etc.)
-**Blocks**: GATE_4 must be approved
+**Blocks**: GATE_5_COMPLETENESS must be passed/waived (leaving `final-review` requires it)
 **Gate**: None
 
 ```

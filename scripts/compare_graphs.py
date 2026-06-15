@@ -56,6 +56,75 @@ _STRENGTH_RANK = {"strong": 3, "medium": 2, "weak": 1}
 _ITEM_RE = re.compile(r"^((?:RULE|VAL|ERR)-\d+)\s*:\s*(.*)$", re.DOTALL)
 
 
+def _qualify(domain, class_name):
+    """Fully-qualified component id: `<domain_slug>.<class_name>`.
+
+    target_components is keyed by this (NOT the bare class name) so two same-named
+    classes in different domains/types no longer overwrite each other in the index
+    — the collision that silently dropped one component's evidence and produced a
+    false FAIL. The domain slug is the domain key verbatim (it is already a stable
+    identifier in both the blueprint and the target graph)."""
+    return "%s.%s" % (domain or "", class_name or "")
+
+
+def _domain_slug(domain):
+    """Normalize a domain key for cross-graph comparison. The blueprint and the
+    target graph often spell the same domain differently (e.g. blueprint
+    `Domain_customer` vs target-graph `customer`); slug both to a bare lowercase
+    token so the qualified-key join can find the right component even when the
+    class name collides across domains."""
+    if not domain:
+        return ""
+    s = str(domain).strip().lower()
+    # Drop a leading `domain_`/`domain-`/`domain` prefix the blueprint uses.
+    for pre in ("domain_", "domain-", "domain"):
+        if s.startswith(pre):
+            s = s[len(pre):]
+            break
+    return re.sub(r"[^a-z0-9]+", "", s)
+
+
+def _resolve_component(target_components, simple_index, class_name, domain=None):
+    """Resolve a blueprint class_name (+ its blueprint domain) to ONE target
+    component in the qualified-key index.
+
+    Resolution order (the task's contract — qualified first, simple-name only when
+    unambiguous):
+      1. If `domain` is given, prefer the component whose target-graph domain slugs
+         equal to the blueprint domain slug (the disambiguating qualified match).
+      2. Otherwise — or if no domain-matched candidate exists — accept a bare
+         simple-name match ONLY when exactly one component in the whole target
+         graph carries that class name (unambiguous). A simple name shared by >1
+         domain with NO domain hint stays unresolved (None) rather than silently
+         binding to an arbitrary collision winner.
+
+    Returns (qualified_key, component) or (None, None)."""
+    if not class_name:
+        return None, None
+    candidates = simple_index.get(class_name) or []
+    if not candidates:
+        return None, None
+    if domain:
+        want = _domain_slug(domain)
+        domain_matched = [
+            qk for qk in candidates
+            if _domain_slug(target_components[qk].get("domain")) == want
+        ]
+        if len(domain_matched) == 1:
+            qk = domain_matched[0]
+            return qk, target_components[qk]
+        if len(domain_matched) > 1:
+            # Same class name twice in the SAME (slugged) domain — genuinely
+            # ambiguous; do not guess. (Should not happen for a well-formed graph.)
+            return None, None
+    # No domain hint, or no domain-matched candidate: a simple-name match is
+    # tolerated only when it is globally unique.
+    if len(candidates) == 1:
+        qk = candidates[0]
+        return qk, target_components[qk]
+    return None, None
+
+
 def split_item(item):
     """Normalize a rule/validation/error_path item to (id, statement).
 
@@ -115,13 +184,20 @@ def _component_evidence(comp):
     return evidence
 
 
-def _collect_chain_evidence(req_id, target_class, target_components, bp_mappings, bp):
+def _collect_chain_evidence(req_id, target_class, target_components, bp_mappings, bp,
+                            simple_index=None, target_domain=None):
     """Union implemented_rules over the bound class and its dependency chain.
 
     Walks blueprint component `dependencies` (req_id -> req_id), resolving each
     to its class_name, plus any direct class_name dependencies declared on the
     component itself. Returns {rule_id: strongest_strength}.
-    """
+
+    Each class is resolved through _resolve_component over the QUALIFIED-key index
+    (`simple_index` maps class_name -> [qualified_key, ...]) so a class name shared
+    across domains binds to the right component (by blueprint domain) instead of an
+    arbitrary collision winner. `simple_index` defaults to None for legacy callers,
+    in which case target_components is treated as a bare class-name map (back-compat
+    with any pre-fix caller / test that constructs it directly)."""
     evidence = {}
 
     def merge(comp):
@@ -130,19 +206,31 @@ def _collect_chain_evidence(req_id, target_class, target_components, bp_mappings
             if prev is None or _STRENGTH_RANK.get(strength, 0) > _STRENGTH_RANK.get(prev, 0):
                 evidence[rid] = strength
 
-    # Map class_name -> component for collaborator lookups.
     seen_classes = set()
 
-    def visit_class(class_name):
-        if not class_name or class_name in seen_classes:
+    def visit_class(class_name, domain=None):
+        if not class_name:
             return
-        seen_classes.add(class_name)
-        comp = target_components.get(class_name)
+        if simple_index is None:
+            # Legacy path: target_components keyed by bare class name.
+            if class_name in seen_classes:
+                return
+            seen_classes.add(class_name)
+            comp = target_components.get(class_name)
+            if comp:
+                merge(comp)
+            return
+        qk, comp = _resolve_component(target_components, simple_index,
+                                      class_name, domain)
+        key = qk or class_name
+        if key in seen_classes:
+            return
+        seen_classes.add(key)
         if comp:
             merge(comp)
 
-    # Bound class first.
-    visit_class(target_class)
+    # Bound class first (resolved against the requirement's own target domain).
+    visit_class(target_class, target_domain)
 
     # Dependency chain: follow blueprint req-level dependencies to collaborator
     # class_names, and resolve any string deps that are themselves class names.
@@ -155,12 +243,12 @@ def _collect_chain_evidence(req_id, target_class, target_components, bp_mappings
         info = bp_mappings.get(rid)
         if not info:
             return
-        visit_class(info.get("class_name"))
+        visit_class(info.get("class_name"), info.get("domain"))
         for dep in info.get("dependencies", []) or []:
             if dep in bp_mappings:
                 visit_req(dep)
             else:
-                # dep may already be a class name
+                # dep may already be a class name (no blueprint domain hint).
                 visit_class(dep)
 
     visit_req(req_id)
@@ -191,14 +279,28 @@ class GraphComparer:
 
     @staticmethod
     def _index_target(tg):
+        """Index the target graph keyed by FULLY-QUALIFIED id (`<domain>.<class>`),
+        not by the bare class name. Keying by simple class name let two same-named
+        classes in different domains/types overwrite each other in the index, so
+        one component's `implemented_rules` evidence was silently lost and the
+        round-trip reported a false FAIL. The qualified key keeps both; the
+        `simple_index` (class_name -> [qualified_key, ...]) lets callers resolve a
+        blueprint class_name back to the right component (via _resolve_component),
+        still tolerating a bare simple-name match when it is unambiguous.
+
+        Returns (target_components, target_entities, simple_index) where
+        target_components is keyed by the qualified id."""
         target_components = {}
         target_entities = {}
+        simple_index = {}
         for d, d_data in tg.get("domains", {}).items():
             for c_name, comp in d_data.get("components", {}).items():
-                target_components[c_name] = {**comp, "domain": d}
+                qk = _qualify(d, c_name)
+                target_components[qk] = {**comp, "domain": d, "class_name": c_name}
+                simple_index.setdefault(c_name, []).append(qk)
             for e_name, ent in d_data.get("entities", {}).items():
                 target_entities[e_name] = {**ent, "domain": d}
-        return target_components, target_entities
+        return target_components, target_entities, simple_index
 
     @staticmethod
     def _index_blueprint(bp):
@@ -215,7 +317,8 @@ class GraphComparer:
         return bp_mappings
 
     # -- per-requirement decision -------------------------------------------
-    def _evaluate_req(self, req_id, req, bp_mappings, target_components, bp):
+    def _evaluate_req(self, req_id, req, bp_mappings, target_components, bp,
+                      simple_index=None):
         """Return a per-requirement result dict (the row consumed by both the
         Markdown matrix and the JSON report)."""
         title = req.get("title", "")
@@ -223,6 +326,24 @@ class GraphComparer:
 
         bp_info = bp_mappings.get(req_id)
         target_class = bp_info.get("class_name") if bp_info else None
+        bp_domain = bp_info.get("domain") if bp_info else None
+
+        # Resolve the blueprint class_name to ONE target component through the
+        # qualified-key index. Keying target_components by simple class name used
+        # to let same-named classes across domains collide and overwrite each
+        # other; the resolver binds to the right one (by blueprint domain) and
+        # falls back to a unique simple-name match. `target_comp` is the bound
+        # component (or None); `target_qk` its qualified key.
+        if simple_index is None:
+            # Legacy/back-compat: target_components keyed by bare class name.
+            target_comp = (target_components.get(target_class)
+                           if target_class else None)
+            target_qk = target_class if target_comp else None
+        else:
+            target_qk, target_comp = _resolve_component(
+                target_components, simple_index, target_class, bp_domain
+            )
+        class_bound = target_comp is not None
 
         records = _build_rule_set(req)
         rule_ids = [r["id"] for r in records]
@@ -260,10 +381,10 @@ class GraphComparer:
 
         # --- legacy class-existence path (back-compat) ----------------------
         if self.rules_mode == "off":
-            exists = bool(target_class and target_class in target_components)
+            exists = class_bound
             status = "PASS" if exists else "FAIL"
             if exists:
-                tc = target_components[target_class]
+                tc = target_comp
                 if tc.get("type") == "controller" and tc.get("endpoints"):
                     eps = [f"{e['method']} {e['path']}" for e in tc["endpoints"]]
                     details = f"Exposed REST Endpoint: {', '.join(eps)}"
@@ -291,7 +412,7 @@ class GraphComparer:
 
         # --- rule-coverage path (default) -----------------------------------
         # 1. Class binding precondition.
-        if not target_class or target_class not in target_components:
+        if not class_bound:
             return {
                 "req_id": req_id,
                 "title": title,
@@ -307,9 +428,13 @@ class GraphComparer:
                 "warn": None,
             }
 
-        # 3. Gather evidence over the bound class + dependency chain.
+        # 3. Gather evidence over the bound class + dependency chain (resolved
+        #    against the bound component's own target domain so a collision-named
+        #    collaborator binds to the right component).
+        target_domain = target_comp.get("domain") if target_comp else bp_domain
         evidence = _collect_chain_evidence(
-            req_id, target_class, target_components, bp_mappings, bp
+            req_id, target_class, target_components, bp_mappings, bp,
+            simple_index=simple_index, target_domain=target_domain
         )
         rule_id_set = set(rule_ids)
         covered_strength = {
@@ -392,14 +517,15 @@ class GraphComparer:
             self.exit_ok = False
             return False
 
-        target_components, _target_entities = self._index_target(tg)
+        target_components, _target_entities, simple_index = self._index_target(tg)
         bp_mappings = self._index_blueprint(bp)
 
         comparison_rows = []
         for domain_id, d_data in rg.get("domains", {}).items():
             for req_id, req in d_data.get("requirements", {}).items():
                 comparison_rows.append(
-                    self._evaluate_req(req_id, req, bp_mappings, target_components, bp)
+                    self._evaluate_req(req_id, req, bp_mappings, target_components,
+                                       bp, simple_index=simple_index)
                 )
 
         # Aggregates.

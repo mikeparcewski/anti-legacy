@@ -19,7 +19,8 @@
     "GATE_2_PLAN": { "status": "pending" },
     "GATE_3_BUILD": { "status": "pending" },
     "GATE_3B_SEMANTIC": { "status": "pending" },
-    "GATE_4_UAT": { "status": "pending" }
+    "GATE_4_UAT": { "status": "pending" },
+    "GATE_5_COMPLETENESS": { "status": "pending" }
   },
   "learnings": []
 }

@@ -540,6 +540,83 @@ def source(db: str, name: str, binary: str | None = None) -> dict:
     return {"name": name, "matches": matches, "body": body}
 
 
+def _parse_source_match_header(line: str):
+    """Parse a `source` per-match header line into {kind, name, file, line}, else
+    None.
+
+    The engine emits, per match, a header of the form:
+
+        ``  [Function] MAIN-PARA @ app/cbl/COUSR00C.cbl:98``
+
+    The trailing ``@ <file>:<line>`` is the disambiguator that distinguishes the
+    21 carddemo MAIN-PARA collisions — the body BELOW each header belongs to the
+    node at that exact file. Returns None for the count banner / body lines.
+    """
+    s = line.strip()
+    if not (s.startswith("[") and "]" in s and " @ " in s):
+        return None
+    kind_close = s.index("]")
+    kind = s[1:kind_close].strip()
+    rest = s[kind_close + 1:].strip()
+    nm, _, loc = rest.rpartition(" @ ")
+    nm = nm.strip()
+    loc = loc.strip()
+    if ":" not in loc:
+        return None
+    file_part, _, line_part = loc.rpartition(":")
+    try:
+        line_no = int(line_part)
+    except ValueError:
+        return None
+    return {
+        "kind": kind,
+        "name": nm,
+        "file": file_part.strip(),
+        "line": line_no,
+    }
+
+
+def source_by_match(db: str, name: str, binary: str | None = None) -> list:
+    """Split `source <name>` output into ONE record PER match, each carrying its
+    OWN body slice — the collision-free source read.
+
+    `source()` (above) concatenates EVERY match's body into a single `body`
+    string. For a name that resolves to many nodes (carddemo MAIN-PARA ×21) that
+    single blob is shared by all of them — the ISS-20 fingerprint aliasing bug.
+    This splits on the per-match `[Kind] name @ file:line` header so each
+    distinct node (keyed by its file) gets the exact body BELOW its header.
+
+    Returns ``[{kind, name, file, line, body}, ...]`` in engine order. A name with
+    a single match returns a one-element list; an unindexed/empty name returns [].
+    """
+    out = _run(
+        ["source", name] + _db_args(db),
+        timeout=DEFAULT_TIMEOUTS["source"],
+        binary=binary,
+    )
+    records = []
+    cur = None
+    cur_lines: list = []
+    for line in out.splitlines():
+        s = line.strip()
+        if s.endswith(":") and "match(es) for" in s:
+            continue
+        hdr = _parse_source_match_header(line)
+        if hdr is not None:
+            if cur is not None:
+                cur["body"] = "\n".join(cur_lines).strip("\n")
+                records.append(cur)
+            cur = dict(hdr)
+            cur_lines = []
+            continue
+        if cur is not None:
+            cur_lines.append(line)
+    if cur is not None:
+        cur["body"] = "\n".join(cur_lines).strip("\n")
+        records.append(cur)
+    return records
+
+
 def rank(db: str = DEFAULT_DB, binary: str | None = None) -> list:
     """Run `wicked-estate rank --db <db>`. Returns the ranked node list
     (most important first) for the crawl worklist order."""
@@ -1890,14 +1967,15 @@ def fingerprint(
     rename/move/signature change) and is exposed via fingerprint_native() + the additive
     identity_fingerprint field.
 
-    KNOWN SHIM-ONLY LIMITATION (fixed by native identity-hash): in baseline mode the slice
-    is fetched via the name-keyed source(db, name), so two symbols sharing a `name` across
-    files (e.g. carddemo MAIN-PARA ×21) get the SAME concatenated body and thus the SAME
-    fingerprint — an edit to one moves BOTH in changed() (over-reports on collision-heavy
-    estates). The SINGLE-node shim path is exact (it disambiguates via resolve_symbol_id
-    and refuses ambiguous names). The NATIVE identity-fingerprint has NO name-aliasing (it
-    is keyed per-interned-symbol over identity) — fingerprint_native() resolves to one
-    SymbolId and is collision-free; the aliasing caveat applies ONLY to the shim baseline.
+    NAME-COLLISION SAFETY (ISS-20, FIXED): baseline mode no longer keys the body cache by
+    NAME. The prior shim fetched source(db, name) — which CONCATENATES every match into one
+    blob — so the 21 carddemo MAIN-PARA nodes shared one fingerprint and a single edit moved
+    ALL of them in changed() (over-report on collision-heavy estates). Baseline mode now
+    splits source() into PER-MATCH bodies via source_by_match() and attributes each node's
+    own file slice to its interned symbol_id, so every collision-name node gets a DISTINCT
+    fingerprint. The SINGLE-node shim path was already exact (resolve_symbol_id + refuse on
+    ambiguity). The NATIVE identity-fingerprint (fingerprint_native()) remains collision-free
+    by construction; the body-drift baseline is now collision-free too.
     """
     # NOTE: native `fingerprint` EXISTS in v0.1.5 (probe -> True) but is an IDENTITY
     # hash that does NOT move on a body edit, so it cannot be the drift primitive. The
@@ -1917,19 +1995,22 @@ def fingerprint(
                 "disambiguate with --file/--kind."
             )
         symbol_id = sids[0]
-        src = source(db, node, binary=binary)
-        # Pick the matching node row for name/file/kind metadata.
+        # Per-match split so a file-disambiguated single node hashes ONLY ITS OWN
+        # slice, never the concatenation of every collision (ISS-20). source() alone
+        # returns ALL matches' bodies joined — using that would alias collisions.
+        recs = source_by_match(db, node, binary=binary)
+        # Pick the record whose file/kind matches the resolved node.
         meta = None
-        for m in src["matches"]:
-            if file is not None and os.path.basename(m["file"]) != os.path.basename(file):
+        for r in recs:
+            if file is not None and os.path.basename(r["file"]) != os.path.basename(file):
                 continue
-            if kind is not None and m["kind"].lower() != kind.strip().strip('"').lower():
+            if kind is not None and r["kind"].lower() != kind.strip().strip('"').lower():
                 continue
-            meta = m
+            meta = r
             break
-        if meta is None and src["matches"]:
-            meta = src["matches"][0]
-        body = src.get("body", "")
+        if meta is None and recs:
+            meta = recs[0]
+        body = (meta or {}).get("body", "")
         unhashable = _body_is_unhashable(body)
         result = {
             "db": db or DEFAULT_DB,
@@ -1953,24 +2034,46 @@ def fingerprint(
                 pass
         return result
 
-    # Baseline mode: full map over all (optionally kind-filtered) nodes.
+    # Baseline mode: full map over all (optionally kind-filtered) nodes, keyed by
+    # the interned symbol_id (ISS-20: collision-free per node).
+    #
+    # The PRIOR shim keyed the body cache by NAME and used source(db, name), which
+    # CONCATENATES every match's body into one blob — so all 21 carddemo MAIN-PARA
+    # nodes shared one fingerprint and a single edit moved ALL of them (over-report).
+    # The fix: split source() into per-match bodies (source_by_match) keyed by the
+    # node's FILE, then attribute the right body to each symbol_id by its own file.
     kinds = [kind] if kind else None
     nodes = list_nodes(db, kinds=kinds)
     fingerprints: dict = {}
-    # source() is name-keyed and returns ALL matches' bodies concatenated; to key
-    # the hash to the exact interned node we slice per (name,file) using the node
-    # span when there are name collisions. Practically, hash the per-name body and
-    # attribute it to the node's symbol_id (collisions on the same name+file share
-    # the slice text, so they share the fingerprint — acceptable and stable).
-    body_cache: dict = {}
+    # Per name: a {file_basename -> body} map from the split per-match output, plus
+    # an ordered fallback list so a single-match (no header) name still resolves.
+    by_name_cache: dict = {}
     for n in nodes:
         name = n["name"]
-        if name not in body_cache:
+        nfile = os.path.basename(n.get("file") or "")
+        if name not in by_name_cache:
+            per_file: dict = {}
+            ordered: list = []
             try:
-                body_cache[name] = source(db, name, binary=binary).get("body", "")
+                for rec in source_by_match(db, name, binary=binary):
+                    rbody = rec.get("body", "")
+                    ordered.append(rbody)
+                    per_file.setdefault(os.path.basename(rec.get("file") or ""), rbody)
             except WickedEstateError:
-                body_cache[name] = ""
-        body = body_cache[name]
+                pass
+            by_name_cache[name] = (per_file, ordered)
+        per_file, ordered = by_name_cache[name]
+        # Resolve THIS node's body: prefer its exact file slice (collision-safe);
+        # fall back to the lone match when the name has exactly one body (no
+        # header / file mismatch on a singleton name).
+        if nfile and nfile in per_file:
+            body = per_file[nfile]
+        elif len(ordered) == 1:
+            body = ordered[0]
+        elif nfile in per_file:
+            body = per_file[nfile]
+        else:
+            body = ""
         if _body_is_unhashable(body):
             fingerprints[n["symbol_id"]] = ""
         else:
@@ -2088,6 +2191,164 @@ def changed_since(db: str, sha: str, binary: str | None = None) -> dict:
                 "line": item.get("line"),
             })
     return {"since_sha": sha, "symbols": symbols, "count": len(symbols)}
+
+
+# ---- D: drift (legacy-graph digest drift gate, ISS-12) ----------------------
+def _digest_checksum(digest_text: str) -> str:
+    """SHA-256 of a canonical digest body — the same checksum the manifest stores
+    for the `legacy-graph` artifact (which is `sha256(legacy-graph.digest.txt)`).
+
+    The digest is already canonicalized (volatile lines stripped, edge kinds
+    sorted) so this hash is deterministic across machines/re-runs."""
+    return hashlib.sha256(digest_text.encode("utf-8")).hexdigest()
+
+
+def _digest_lines(digest_text: str) -> list:
+    """Non-empty stripped lines of a canonical digest, for line-level diffing.
+
+    A canonical digest is::
+
+        nodes=84 edges=101 files=1
+        edge "calls" = 18
+        edge "contains" = 83
+
+    so each line is either the node/edge/file count header or one ``edge "k" = N``
+    count — exactly the granular facts a drift diff reports as changed.
+    """
+    return [ln.strip() for ln in (digest_text or "").splitlines() if ln.strip()]
+
+
+def _resolve_baseline_digest(against: str) -> str:
+    """Resolve the `against` baseline argument to canonical digest TEXT.
+
+    Accepts (first applicable wins):
+      * a PATH to a digest file (e.g. `.anti-legacy/legacy-graph.digest.txt`) —
+        read, then canonicalize (idempotent if already canonical);
+      * RAW digest text (contains `nodes=`) — canonicalize directly;
+      * a bare 64-hex SHA-256 checksum — returned as-is (compare-by-checksum only;
+        line-level `changed` detail is unavailable for a bare hash).
+
+    Returns the canonical digest text, OR the bare checksum string when `against`
+    is a checksum (the caller detects this via the 64-hex shape). Raises if a
+    given file path does not exist.
+    """
+    a = (against or "").strip()
+    if not a:
+        raise WickedEstateError("drift: --against baseline is empty")
+    # Bare SHA-256 checksum (64 lowercase hex) — checksum-only comparison.
+    if len(a) == 64 and all(c in "0123456789abcdef" for c in a.lower()):
+        return a.lower()
+    # A path to a digest file.
+    if os.path.exists(a) and os.path.isfile(a):
+        try:
+            with open(a, "r", encoding="utf-8") as f:
+                raw = f.read()
+        except OSError as e:
+            raise WickedEstateError(f"drift: could not read baseline digest {a}: {e}") from e
+        return _canonicalize_stats(raw)
+    # Raw digest text passed inline.
+    if "nodes=" in a:
+        return _canonicalize_stats(a)
+    raise WickedEstateError(
+        f"drift: --against {a!r} is neither an existing digest file, raw digest "
+        "text (must contain 'nodes='), nor a 64-hex SHA-256 checksum"
+    )
+
+
+def drift(db: str, against: str, binary: str | None = None) -> dict:
+    """Detect drift between the legacy CODE graph and its registered digest seam.
+
+    THE §I6 KEYSTONE (ISS-12): rule annotations are written against a graph whose
+    deterministic stats digest (`.anti-legacy/legacy-graph.digest.txt`) was
+    checksummed and registered as the `legacy-graph` evidence at survey time. If
+    the underlying code changes and the graph is re-indexed WITHOUT re-running
+    extraction, the annotations are stale — and that staleness is checksum-
+    detectable: the current digest no longer matches the registered one.
+
+    This recomputes the CURRENT canonical digest from `db` (stats_digest, which
+    strips volatile git/staleness/size lines and sorts edge kinds) and compares
+    it — both by SHA-256 checksum AND line-by-line — against the `against`
+    baseline (a digest-file path, raw digest text, or a bare 64-hex checksum;
+    see _resolve_baseline_digest). It COMPOSES the existing digest primitive — it
+    does NOT re-implement or fake the comparison.
+
+    Returns::
+
+        {
+          "db": ...,
+          "against": <the baseline arg>,
+          "baseline_kind": "digest" | "checksum",
+          "drift": <bool>,                 # True when the checksums differ
+          "current_checksum": <sha256>,
+          "baseline_checksum": <sha256>,
+          "changed": [ {"baseline": <line|None>, "current": <line|None>}, ... ],
+        }
+
+    `changed` is the symmetric line diff of the two canonical digests (added,
+    removed, or count-changed facts). When the baseline is a bare checksum the
+    per-line detail is unavailable, so `changed` is `[]` and the verdict rests on
+    the checksum alone. A True `drift` means: re-run extraction (re-annotate the
+    changed nodes) before the annotations can be trusted — the gate BLOCKS.
+    """
+    current_digest = stats_digest(db, binary=binary)
+    current_checksum = _digest_checksum(current_digest)
+
+    resolved = _resolve_baseline_digest(against)
+    is_checksum = (
+        len(resolved) == 64 and all(c in "0123456789abcdef" for c in resolved)
+    )
+    if is_checksum:
+        baseline_checksum = resolved
+        baseline_kind = "checksum"
+        changed: list = []
+    else:
+        baseline_checksum = _digest_checksum(resolved)
+        baseline_kind = "digest"
+        base_lines = _digest_lines(resolved)
+        cur_lines = _digest_lines(current_digest)
+        changed = _diff_digest_lines(base_lines, cur_lines)
+
+    return {
+        "db": db or DEFAULT_DB,
+        "against": against,
+        "baseline_kind": baseline_kind,
+        "drift": current_checksum != baseline_checksum,
+        "current_checksum": current_checksum,
+        "baseline_checksum": baseline_checksum,
+        "changed": changed,
+    }
+
+
+def _diff_digest_lines(base_lines: list, cur_lines: list) -> list:
+    """Symmetric line diff of two canonical digests -> a list of
+    {baseline, current} change records.
+
+    A canonical digest line is a single fact (the `nodes=.. edges=.. files=..`
+    header, or one `edge "k" = N`). We key each fact by its STEM:
+      * the count header keys on the literal "nodes/edges/files" tag,
+      * an edge line keys on its kind (the quoted name),
+    so a count CHANGE pairs (baseline vs current) on the same stem rather than
+    showing as an unrelated add+remove. Facts only in the baseline -> removed
+    (current=None); only in current -> added (baseline=None). Deterministically
+    ordered by stem.
+    """
+    def _stem(line: str) -> str:
+        s = line.strip()
+        if s.startswith("nodes=") and "edges=" in s:
+            return "\x00counts"  # the single node/edge/file header line
+        if s.startswith('edge "') and '"' in s[6:]:
+            return 'edge:' + s.split('"', 2)[1]
+        return s  # fallback: the whole line is its own stem
+
+    base_by = {_stem(l): l for l in base_lines}
+    cur_by = {_stem(l): l for l in cur_lines}
+    out = []
+    for stem in sorted(set(base_by) | set(cur_by)):
+        b = base_by.get(stem)
+        c = cur_by.get(stem)
+        if b != c:
+            out.append({"baseline": b, "current": c})
+    return out
 
 
 # ---- E: correspond (+ thin semantic wrapper) --------------------------------
@@ -2459,6 +2720,10 @@ def main(argv=None) -> int:
     p = sub.add_parser("changed-since", help="adjunct: native git-diff symbols since a SHA", parents=[db_parent])
     p.add_argument("sha", help="git SHA to diff HEAD against")
 
+    p = sub.add_parser("drift", help="detect legacy-graph digest drift vs a registered baseline (exit 2 on drift)", parents=[db_parent])
+    p.add_argument("--against", required=True,
+                   help="baseline: a digest-file path (e.g. .anti-legacy/legacy-graph.digest.txt), raw digest text, or a 64-hex sha256 checksum")
+
     p = sub.add_parser("correspond", help="enumerate cross-repo node correspondences (native-first when --kinds given, shim fallback)", parents=[db_parent])
     p.add_argument("db_a")
     p.add_argument("db_b")
@@ -2550,6 +2815,12 @@ def main(argv=None) -> int:
             _print_json(changed(args.db, args.since, kind=args.kind))
         elif args.cmd == "changed-since":
             _print_json(changed_since(args.db, args.sha))
+        elif args.cmd == "drift":
+            _verdict = drift(args.db, args.against)
+            _print_json(_verdict)
+            # Exit code 2 on drift so CI / the gatekeeper check BLOCKS without
+            # parsing JSON (0 = no drift, 2 = drift, 1 = helper error above).
+            return 2 if _verdict["drift"] else 0
         elif args.cmd == "correspond":
             _print_json(
                 correspond(

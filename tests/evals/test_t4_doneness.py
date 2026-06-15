@@ -430,3 +430,117 @@ def test_t4_iss01_drop_without_reason_still_fails(tmp_path):
     assert rc != 0, (
         "a reason-less 'drop' must NOT pass the gate — silent drops cannot "
         f"launder past GATE_3_BUILD.\nstdout:\n{stdout}\nstderr:\n{stderr}")
+
+
+# ---------------------------------------------------------------------------
+# FIX #6 -- component-name COLLISION across domains. _index_target keyed target
+# components by SIMPLE class name, so two same-named classes in different domains
+# overwrote each other: one component's implemented_rules evidence was silently
+# lost, producing a FALSE FAIL. The fix keys by a fully-qualified id
+# (domain + "." + class) and resolves the blueprint class_name -> the RIGHT
+# component (by blueprint domain), still tolerating a unique simple-name match.
+# ---------------------------------------------------------------------------
+# All 4 of REQ_X's rule ids, each with STRONG evidence (PASS-grade).
+_FULL_EVIDENCE = [
+    {"rule_id": rid, "source": "test_ledger", "evidence_strength": "strong",
+     "file_path": "t.java", "line_range": "1-2"}
+    for rid in ("RULE-001", "RULE-002", "VAL-001", "ERR-001")
+]
+
+
+def _two_domain_target_graph(customer_evidence, other_evidence):
+    """A target graph with the SAME class name `XService` in TWO domains:
+      * `customer`  -> the component the blueprint's REQ_X actually binds to
+                       (blueprint domain `Domain_customer` slugs to `customer`);
+      * `billing`   -> a DECOY same-named class in a different domain.
+    Each XService carries the given implemented_rules. With simple-name keying
+    one silently overwrites the other; with the qualified-key fix both survive
+    and REQ_X binds to the customer one."""
+    def _svc(evidence):
+        return {
+            "type": "service",
+            "file_path": "XService.java",
+            "implemented_rules": list(evidence),
+        }
+    return {
+        "generated_at": "synthetic",
+        "target_path": "./target/demoapp",
+        "domains": {
+            "customer": {
+                "package": "com.demoapp.customer",
+                "components": {"XService": _svc(customer_evidence)},
+                "entities": {},
+            },
+            "billing": {
+                "package": "com.demoapp.billing",
+                "components": {"XService": _svc(other_evidence)},
+                "entities": {},
+            },
+        },
+    }
+
+
+def _run_compare_target_obj(tmp_path, target_obj):
+    """Run compare_graphs.py against the canonical enriched req-graph + blueprint
+    fixtures but a custom (in-memory) TARGET graph. Returns (rc, report_json)."""
+    req = tmp_path / "requirements_graph.json"
+    bp = tmp_path / "blueprint.json"
+    tg = tmp_path / "target_graph.json"
+    shutil.copyfile(_fixture("requirements_graph_enriched.json"), req)
+    shutil.copyfile(_fixture("blueprint.json"), bp)
+    with open(tg, "w") as f:
+        json.dump(target_obj, f)
+    report_md = tmp_path / "evidence" / "functional_comparison_report.md"
+    cmd = [
+        sys.executable, _COMPARE_GRAPHS,
+        "--requirements-graph", str(req),
+        "--blueprint", str(bp),
+        "--target-graph", str(tg),
+        "--report", str(report_md),
+    ]
+    proc = subprocess.run(cmd, cwd=_REPO_ROOT, capture_output=True, text=True)
+    return proc.returncode, report_md.with_suffix(".json"), proc.stdout, proc.stderr
+
+
+def test_t4_fix6_collision_does_not_shadow_correct_component(tmp_path):
+    """The blueprint-bound `customer.XService` is FULLY implemented; a same-named
+    `billing.XService` decoy has ZERO evidence. Simple-name keying could let the
+    empty decoy overwrite the real component in the index -> a FALSE FAIL. With
+    the qualified-key fix REQ_X resolves to the customer component and PASSes."""
+    tg = _two_domain_target_graph(
+        customer_evidence=_FULL_EVIDENCE, other_evidence=[])
+    rc, report_json, stdout, stderr = _run_compare_target_obj(tmp_path, tg)
+    row = _load_req_row(report_json)
+    status = str(row.get("status", "")).upper()
+    covered = _norm_ids(row.get("covered_rule_ids"))
+    assert status == "PASS", (
+        f"REQ_X binds to customer.XService (fully implemented); a same-named "
+        f"decoy in another domain must not shadow it. got status={status!r} "
+        f"row={row}\nstdout:\n{stdout}\nstderr:\n{stderr}")
+    assert _ALL_RULE_IDS.issubset(covered), (
+        f"all of REQ_X's rules are implemented on the bound component; "
+        f"covered={sorted(covered)} row={row}")
+    assert rc == 0, f"rc={rc}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+
+
+def test_t4_fix6_binds_to_blueprint_domain_not_collision_winner(tmp_path):
+    """Mirror image: the DECOY `billing.XService` is fully implemented but the
+    blueprint-bound `customer.XService` carries NO evidence. The done-check must
+    bind to the BLUEPRINT domain's component (uncovered) and NOT launder the
+    decoy's evidence in — so REQ_X is NOT PASS and the run fails."""
+    tg = _two_domain_target_graph(
+        customer_evidence=[], other_evidence=_FULL_EVIDENCE)
+    rc, report_json, stdout, stderr = _run_compare_target_obj(tmp_path, tg)
+    row = _load_req_row(report_json)
+    status = str(row.get("status", "")).upper()
+    covered = _norm_ids(row.get("covered_rule_ids"))
+    assert status != "PASS", (
+        f"the bound customer.XService has NO evidence; the decoy billing.XService"
+        f"'s evidence must NOT be credited to REQ_X. got status={status!r} "
+        f"row={row}\nstdout:\n{stdout}\nstderr:\n{stderr}")
+    assert not covered, (
+        f"no rule of the bound (empty) component is implemented; covered should "
+        f"be empty, got {sorted(covered)} row={row}")
+    assert rc != 0, (
+        f"a collision must not false-PASS by crediting another domain's "
+        f"evidence; rc={rc}\nstdout:\n{stdout}\nstderr:\n{stderr}")

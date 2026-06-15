@@ -13,12 +13,15 @@ description: >
 
 Executes deterministic compilation checks on the generated target codebase,
 then a round-trip rule-coverage proof comparing the target graph against the
-requirements graph + blueprint. Produces a build-integrity evidence envelope
-and a functional-comparison report. GATE_3_BUILD is auto-cleared without human
-sign-off ONLY when BOTH compilation passes AND the round-trip proves every
-business rule is implemented (`rule_coverage` >= 1.0, zero FAIL requirements);
-compilation alone is insufficient. If the round-trip fails, swarm is
-re-dispatched for the uncovered rules instead of clearing the gate.
+requirements graph + blueprint, then RUNS the pre-build functional acceptance
+tests (authored by `anti-legacy:functional-tests`) against the built target.
+Produces a build-integrity evidence envelope, a functional-comparison report,
+and a functional-test report. GATE_3_BUILD is auto-cleared without human sign-off
+ONLY when ALL of: compilation passes, the round-trip proves every business rule
+is implemented (`rule_coverage` >= 1.0, zero FAIL requirements), AND the
+functional-acceptance run is `PASS` (an ERROR/unsupported-stack report is NOT a
+pass). Compilation alone is insufficient. If the round-trip or the functional run
+fails, swarm is re-dispatched for the gap instead of clearing the gate.
 
 ## Cross-Platform Notes
 
@@ -132,6 +135,43 @@ python3 .anti-legacy/run.py manifest register functional-comparison-report-md \
   --status final
 ```
 
+## Step 4b: Functional acceptance execution (BLOCKING)
+
+The pre-build acceptance tests authored by `anti-legacy:functional-tests` (one
+scenario per contract) are EXECUTED here against the BUILT target. This is the
+post-build half of the functional-acceptance cycle and is independent of the
+round-trip rule-coverage proof: round-trip proves the rules are *present* in the
+target graph; this proves the scenarios actually *pass* when run.
+
+```bash
+python3 .anti-legacy/run.py test_runner \
+  --workspace {target_path} \
+  --stack {target_stack} \
+  --contracts .anti-legacy/contracts \
+  --report .anti-legacy/evidence/functional-test-report.json
+```
+
+For a Java target the runner generates a JUnit test per scenario, runs
+`mvn -Dtest=... test` against the built target, and parses the Surefire results
+into a per-scenario pass/fail. The report's overall `status` is:
+
+- **PASS** — every scenario passed. Proceed.
+- **FAIL** — a scenario assertion failed against the built target. Do NOT clear
+  the gate; surface the failing `req_id`/scenario and re-dispatch `anti-legacy:swarm`.
+- **ERROR** — the runner could not execute (unsupported stack / missing Maven or
+  JDK / missing target class). This is NOT a pass. Fix the toolchain or the build,
+  then re-run. An ERROR never clears the gate — there is no false-green path.
+
+Register the report:
+
+```bash
+python3 .anti-legacy/run.py manifest register functional-test-report \
+  --path evidence/functional-test-report.json \
+  --format json \
+  --produced-by anti-legacy:target-review \
+  --status final
+```
+
 ## Step 5: Auto-clear GATE_3_BUILD if passing
 
 **Scope caveat**: `GATE_3_BUILD` proves the code COMPILES and the named classes
@@ -142,22 +182,31 @@ is the rule-coverage check in `compare_graphs.py`
 (`functional_comparison_report.json`) plus `GATE_3B_SEMANTIC` that proves
 `business_rules`/`validations`/`error_paths` are implemented.
 
-**Done-gate (BLOCKING)** — assert build integrity PASS AND round-trip pass before
-recording the gate. If this assertion FAILS, do NOT run the `gate` command below,
-do NOT run `register --status final`, and do NOT run `advance`; surface the specific
-gap to the user (and re-dispatch swarm per Step 4) and stop. The gate/register/advance
-calls are CONDITIONAL on this assertion passing:
+**Done-gate (BLOCKING)** — assert build integrity PASS AND round-trip pass AND the
+post-build functional-acceptance run PASS before recording the gate. If this
+assertion FAILS, do NOT run the `gate` command below, do NOT run
+`register --status final`, and do NOT run `advance`; surface the specific gap to
+the user (and re-dispatch swarm per Step 4 / Step 4b) and stop. The
+gate/register/advance calls are CONDITIONAL on this assertion passing. The
+functional-test-report MUST exist and be `PASS` — a missing report, a `FAIL`, or
+an `ERROR` (unsupported stack / missing toolchain) all BLOCK; there is no
+false-green path:
 
 ```bash
 python3 -c "
-import json, sys
+import json, os, sys
 bi = json.load(open('.anti-legacy/evidence/build-integrity.json'))
 fc = json.load(open('.anti-legacy/evidence/functional_comparison_report.json'))
 agg = fc.get('aggregate', fc)
 fails = agg.get('fail_count', agg.get('fail', 0))
 cov = agg.get('rule_coverage', 0.0)
-ok = (str(bi.get('status','')).upper() == 'PASS') and (int(fails) == 0) and (float(cov) >= 1.0)
-sys.stdout.write('OK\n' if ok else 'BLOCKED: build_status=%s fail_count=%s rule_coverage=%s\n' % (bi.get('status'), fails, cov))
+ftr_path = '.anti-legacy/evidence/functional-test-report.json'
+if not os.path.exists(ftr_path):
+    sys.stdout.write('BLOCKED: functional-test-report.json missing (run Step 4b)\n'); sys.exit(1)
+ftr = json.load(open(ftr_path))
+ftr_status = str(ftr.get('status','')).upper()
+ok = (str(bi.get('status','')).upper() == 'PASS') and (int(fails) == 0) and (float(cov) >= 1.0) and (ftr_status == 'PASS')
+sys.stdout.write('OK\n' if ok else 'BLOCKED: build_status=%s fail_count=%s rule_coverage=%s functional_status=%s\n' % (bi.get('status'), fails, cov, ftr_status))
 sys.exit(0 if ok else 1)
 "
 ```
@@ -169,8 +218,8 @@ round-trip done-gate assertion above exits 0):
 python3 .anti-legacy/run.py manifest gate GATE_3_BUILD \
   --opinion passed \
   --evaluator "anti-legacy:target-review" \
-  --rationale "Compilation, code quality, security checks passed AND round-trip rule-coverage proof (compare_graphs) passed with rule_coverage>=1.0" \
-  --evidence "build-integrity,code-quality,security-scan,functional-comparison-report"
+  --rationale "Compilation, code quality, security checks passed AND round-trip rule-coverage proof (compare_graphs) passed with rule_coverage>=1.0 AND post-build functional-acceptance run passed" \
+  --evidence "build-integrity,code-quality,security-scan,functional-comparison-report,functional-test-report"
 ```
 
 Store result in git-brain:
@@ -254,9 +303,11 @@ the Step 4 round-trip rule-coverage proof must also pass.
 - `.anti-legacy/evidence/security-scan.json` — security vulnerability scanning evidence envelope
 - `.anti-legacy/target_graph.json` — target Java tree graph with implemented-rule anchors
 - `.anti-legacy/evidence/functional_comparison_report.json` / `.md` — round-trip rule-coverage proof
-- GATE_3_BUILD: auto-cleared ONLY on build-integrity PASS AND round-trip pass (rule_coverage >= 1.0, zero FAIL reqs)
-- Manifest: phase = `target-review`, artifacts `build-integrity`, `code-quality`, `security-scan`, `target-graph`, and `functional-comparison-report` registered
+- `.anti-legacy/evidence/functional-test-report.json` — post-build functional-acceptance run (per-scenario pass/fail against the built target)
+- GATE_3_BUILD: auto-cleared ONLY on build-integrity PASS AND round-trip pass (rule_coverage >= 1.0, zero FAIL reqs) AND functional-test-report PASS
+- Manifest: phase = `target-review`, artifacts `build-integrity`, `code-quality`, `security-scan`, `target-graph`, `functional-comparison-report`, and `functional-test-report` registered
 
 **Next step**: If GATE_3_BUILD cleared → `anti-legacy:uat-crew` to run independent UAT validation.
 If the round-trip FAILED (uncovered rules) → re-dispatch `anti-legacy:swarm` for the uncovered rules, then re-run target-review.
+If the functional-acceptance run FAILED → fix the failing scenarios (re-dispatch `anti-legacy:swarm`) and re-run; if it ERRORed → install the toolchain (Maven/JDK) or fix the build, then re-run.
 If GATE_3_BUILD failed on compilation → fix compilation/quality/security errors and re-run.

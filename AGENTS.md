@@ -27,7 +27,7 @@ Every phase produces exactly one primary artifact. Each producing skill document
 |---|---|
 | `graphs/<app>.db` (wicked-estate code graph) + `legacy-graph.digest.txt` (checksummed seam) | `anti-legacy:survey` |
 | `annotations.jsonl` (rule overlay) + `coverage-report.json` | `anti-legacy:extraction` |
-| `requirements_graph.json` | `anti-legacy:graph-translator` (§I5 re-think; later WF) |
+| `requirements_graph.json` | `anti-legacy:graph-translator` (§I5 — the domain-graph builder) |
 | `blueprint.json` | `anti-legacy:blueprint` |
 | `contracts/{domain}/{req_id}.contract.json` | `anti-legacy:test-strategy` |
 | `task.md` | `anti-legacy:planner` |
@@ -42,7 +42,13 @@ Cross-artifact invariants no skill may relax (see Universal Don'ts): every wicke
 
 ## Gate Approval Cycle
 
-The full gate set is **seven** ids. The five mainline gates run in order, no skipping, no reordering: GATE_1_DESIGN, GATE_2_PLAN, GATE_3_BUILD, GATE_3B_SEMANTIC, GATE_4_UAT. GATE_1_DESIGN, GATE_2_PLAN, GATE_4_UAT require a human. GATE_3B_SEMANTIC is a human semantic review. GATE_3_BUILD auto-clears on evidence (build-integrity `status: PASS` + round-trip rule_coverage ≥ 1.0); no skill, script, or agent may synthesize a human gate. Two further gates sit outside the mainline sequence: **GATE_0_DISCOVERY** (automated, runs post-survey) and **GATE_1B_SEMANTIC_JOIN** (multi-repo only — the semantic-join side phase). `anti-legacy:gatekeeper` is the authoritative list of all seven gates, their evaluators, and their required evidence ids.
+The full gate set is **eight** ids. The six mainline gates run in order, no skipping, no reordering: GATE_1_DESIGN, GATE_2_PLAN, GATE_3_BUILD, GATE_3B_SEMANTIC, GATE_4_UAT, GATE_5_COMPLETENESS. GATE_1_DESIGN, GATE_2_PLAN, GATE_4_UAT require a human. GATE_3B_SEMANTIC is a human semantic review. GATE_3_BUILD auto-clears on evidence (build-integrity `status: PASS` + round-trip rule_coverage ≥ 1.0); GATE_5_COMPLETENESS auto-clears on evidence (`completeness-report` `status: PASS`) at the `final-review` phase and kicks back on FAIL; no skill, script, or agent may synthesize a human gate. Two further gates sit outside the mainline sequence: **GATE_0_DISCOVERY** (automated, runs post-survey) and **GATE_1B_SEMANTIC_JOIN** (multi-repo only — the semantic-join side phase). `anti-legacy:gatekeeper` is the authoritative list of all eight gates, their evaluators, and their required evidence ids.
+
+Three phases sit between the gate phases to host the content agents' work: **`functional-tests`** (after GATE_2_PLAN, before `build` — a blocking pre-build validation pass), **`document`** (after GATE_4_UAT, before `final-review` — the documentation pass), and **`final-review`** (after `document`, before `complete` — the automated GATE_5_COMPLETENESS completeness gate). Their producing skills/scripts are built separately; the manifest only wires the phase enum + sequence + advance preconditions here.
+
+### Generalized gate kick-back
+
+Recording any gate `failed` (`manifest gate <ID> --opinion failed`) triggers a **guided kick-back**: `manifest.py` resets `phase.current` back to that gate's producing phase (`GATE_PRODUCING_PHASE`, the inverse of the precondition map), drops that phase from `completed` so the pipeline genuinely re-enters it, writes a `blocked_reason`, appends an `anti-legacy:gate-kicked-back` audit event, names the skill to re-run, and exits non-zero (code 3) so callers (orchestrate, CI) can branch. It does NOT auto-dispatch the skill — the human/orchestrator decides when to re-run. This applies to ALL gates, not just GATE_1 (a failed GATE_4_UAT rewinds to `uat`/`anti-legacy:uat-crew`; a failed GATE_5_COMPLETENESS rewinds to `document`/`anti-legacy:document`). `passed`/`waived` never reset the phase.
 
 ### Advance preconditions (phase → required gate)
 
@@ -54,8 +60,9 @@ The full gate set is **seven** ids. The five mainline gates run in order, no ski
 | `gate-plan-review` | GATE_2_PLAN |
 | `gate-build-integrity` | GATE_3_BUILD **and** GATE_3B_SEMANTIC |
 | `gate-uat-signoff` | GATE_4_UAT |
+| `final-review` | GATE_5_COMPLETENESS |
 
-If a required gate is not `passed`/`waived`, `advance` exits non-zero and the phase is unchanged — sign or waive the gate first. GATE_0_DISCOVERY and GATE_1B_SEMANTIC_JOIN are intentionally NOT in this map: neither has a dedicated `gate-*` phase enum value (GATE_0 is post-survey automated; GATE_1B is the optional semantic-join side phase), so they are enforced by their own skills and runners, not by the advance precondition.
+If a required gate is not `passed`/`waived`, `advance` exits non-zero and the phase is unchanged — sign or waive the gate first. GATE_0_DISCOVERY and GATE_1B_SEMANTIC_JOIN are intentionally NOT in this map: neither has a dedicated `gate-*` phase enum value (GATE_0 is post-survey automated; GATE_1B is the optional semantic-join side phase), so they are enforced by their own skills and runners, not by the advance precondition. `final-review` is the only non-`gate-*`-named phase in the map: it is itself the completeness-gate phase, so leaving it requires GATE_5_COMPLETENESS.
 
 **Recording a gate** (one form for all of them):
 ```bash
@@ -70,7 +77,7 @@ git add .anti-legacy/ && git commit -m "gate: <GATE_ID> cleared by {name}"
 
 A gate is recorded `passed` only with registered `--evidence` (no-evidence and unknown-evidence both hard-fail); `failed` needs no evidence; `waived` is an explicit human override. There is no `rejected` and no `approve` form.
 
-The per-gate human-review checklists (what each reviewer verifies before `passed`), the reviewer roles, the required evidence ids, and the verification commands live in `anti-legacy:gatekeeper` (its Gate Definitions table + each gate's `check` section). GATE_3_BUILD's automated build tiers live in `anti-legacy:gatekeeper` / `anti-legacy:target-review`. A `failed` GATE_1 opinion that names the wrong nodes triggers a targeted re-run (`extraction` re-crawls/re-annotates the named nodes — idempotent, only the named nodes are re-touched — the packet regenerates, the gate is re-presented) — not a full pipeline restart.
+The per-gate human-review checklists (what each reviewer verifies before `passed`), the reviewer roles, the required evidence ids, and the verification commands live in `anti-legacy:gatekeeper` (its Gate Definitions table + each gate's `check` section). GATE_3_BUILD's automated build tiers live in `anti-legacy:gatekeeper` / `anti-legacy:target-review`. A `failed` opinion on ANY gate triggers the generalized kick-back above — the pipeline rewinds to that gate's producing phase, the producing skill is named for re-run (graph-translator for GATE_1, planner for GATE_2, swarm for GATE_3, semantic-validation for GATE_3B, uat-crew for GATE_4, document for GATE_5), the evidence regenerates, and the gate is re-presented — not a full pipeline restart.
 
 ---
 
@@ -83,7 +90,7 @@ Survey → topology (`wicked-estate index`), not reading source for rules. Extra
 wicked-estate node (native `file`/`line` provenance) → its `requirement` annotation + `annotations.jsonl` overlay row (keyed `{db_id, symbol_id}`, carrying `provenance` = the ring nodes/edges that grounded the rule) → `legacy_components` → `task.md` task → `req_id` → `uat verdict`. The annotation is SymbolId-keyed because names are not unique (carddemo `MAIN-PARA`×21) — the helper resolves name→SymbolId before every write, so the link binds the exact scoped node. A broken link means a swarm agent cannot trace back to source; fix it before advancing.
 
 ### §3 — One engine indexes the whole estate
-`wicked-estate index` captures the mainframe estate (COBOL/JCL/CICS/IMS/DB2 — module/function/field, JCL step/dataset, cics_program/cics_map, ims_database/segment, db2_table) AND modern languages (Java, C#, Go, Python, TypeScript, Rust, …) in one pass, resolving cross-language edges automatically (JCL `EXEC PGM` → COBOL, `CALL` → COBOL). No language-routing split, no batch Python extractor. Do not add Python parsers — parsing is a wicked-estate concern. `survey-modern` survives only as a thin grep fallback for source the engine cannot index.
+`wicked-estate index` captures the mainframe estate (COBOL/JCL/CICS/IMS/DB2 — module/function/field, JCL step/dataset, cics_program/cics_map, ims_database/segment, db2_table) AND modern languages (Java, C#, Go, Python, TypeScript, Rust, …) in one pass, resolving cross-language edges automatically (JCL `EXEC PGM` → COBOL, `CALL` → COBOL). No language-routing split, no batch Python extractor. Do not add Python parsers — parsing is a wicked-estate concern. There is no separate modern survey track: `survey-modern` is **retired** — a do-nothing redirect stub kept only so stale references resolve; modern source is indexed by `anti-legacy:survey` like everything else.
 
 ### §4 — Skills are instructions, not thin wrappers
 A skill that calls one script and prints output is a shell alias. Skills must explain context, give executable steps, handle failure cases, and state what done looks like. Most phase skills are 100–300 lines; a 20-line skill is a stub.
@@ -105,9 +112,9 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 
 **Don't drop file_path or legacy_components.** Any code that builds a node without `file_path`, or a requirement without `legacy_components`, is broken. Both are mandatory and non-null.
 
-**Don't auto-clear human gates.** Of the seven gates, GATE_1_DESIGN, GATE_2_PLAN, GATE_3B_SEMANTIC, and GATE_4_UAT require a human. GATE_3_BUILD and GATE_0_DISCOVERY are the only automated gates (GATE_1B_SEMANTIC_JOIN is multi-repo only — see `anti-legacy:gatekeeper` for the authoritative list). No skill, script, or agent may synthesize a human gate approval.
+**Don't auto-clear human gates.** Of the eight gates, GATE_1_DESIGN, GATE_2_PLAN, GATE_3B_SEMANTIC, and GATE_4_UAT require a human. GATE_3_BUILD, GATE_5_COMPLETENESS, and GATE_0_DISCOVERY are the automated, evidence-cleared gates (GATE_1B_SEMANTIC_JOIN is multi-repo only — see `anti-legacy:gatekeeper` for the authoritative list). No skill, script, or agent may synthesize a human gate approval.
 
-**Don't build Python parsers for modern languages.** Java, Go, TypeScript, C#, Python — the LLM reads these natively. A grep pattern in survey-modern beats a regex parser every time.
+**Don't build Python parsers for modern languages.** Java, Go, TypeScript, C#, Python — the engine (`wicked-estate index`) indexes these natively, in the same pass as the mainframe estate. A regex parser is strictly less accurate and less complete than the engine's tree-sitter-backed graph. (`survey-modern` is retired — see §3; do not resurrect a grep track.)
 
 **Don't write requirement nodes without business_rules.** A requirement with no business rules is a placeholder. Mark it `unresolvable` with a reason, or read the source file again.
 
@@ -124,11 +131,10 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 | Situation | Skill |
 |---|---|
 | Starting a new project | `anti-legacy:setup` |
-| Indexing legacy source into the code graph (any language) | `anti-legacy:survey` |
-| Fallback grep track for source the engine can't index | `anti-legacy:survey-modern` |
+| Indexing legacy source into the code graph (any language, mainframe or modern) | `anti-legacy:survey` |
 | Structural analysis of the code graph | `anti-legacy:analyze` |
 | Extracting business rules (crawl + annotate + coverage) | `anti-legacy:extraction` |
-| Re-thinking annotated rules into the domain graph (§I5, later WF) | `anti-legacy:graph-translator` |
+| Re-thinking annotated rules into the domain graph (§I5) | `anti-legacy:graph-translator` |
 | Designing target architecture | `anti-legacy:blueprint` |
 | Writing test contracts per requirement | `anti-legacy:test-strategy` |
 | Compiling team review document | `anti-legacy:review-packet` |
@@ -155,7 +161,7 @@ All scripts are invoked through the workspace dispatcher: `python3 .anti-legacy/
 | `git_brain` | Git-backed memory — init, store, search, ingest, sync, status | External brain services or npm packages |
 | `wicked_estate` | The code-graph engine seam — resolve binary, index/stats/query/blast-radius/source/rank/cross-graph, resolve-symbol-id, annotate, by-requirement | Raw-SQLite graph reads (except the one documented read-only id-resolution lookup) |
 | `coverage` | Resolved-or-flagged coverage over graph + `annotations.jsonl` → `coverage-report.{json,md}`; exits non-zero (lists unaccounted SymbolIds) when `coverage < 1.0` | A substitute for annotating the nodes |
-| `graph_normalizer` | Code graph → draft requirements scaffold (§I5 re-think, later WF) | Front-half rule extraction (that is `extraction`) |
+| `graph_normalizer` | Code graph → draft requirements scaffold (pinned reference; `domain_graph` is the production §I5 builder) | Front-half rule extraction (that is `extraction`) |
 | `validator_discovery` | The build/semantic/UAT verifier — runs build tooling, writes evidence (`run --gate <id>`) | Clearing a gate manually |
 | `packet_generator` | Requirements graph → offline Markdown packet | Replacing the human review |
 

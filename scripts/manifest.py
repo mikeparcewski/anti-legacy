@@ -36,17 +36,50 @@ MANIFEST_PATH = ".anti-legacy/manifest.json"
 # GATE_1B_SEMANTIC_JOIN and GATE_0_DISCOVERY are intentionally NOT in this map: neither
 # has a dedicated gate-* phase enum value (semantic-join is an optional pre-survey side
 # phase; discovery is a survey concern), so there is no gate phase to gate on exit.
+#
+# GATE_5_COMPLETENESS sits on the final-review phase: it auto-clears on a passing
+# completeness-report and kicks back (resets phase) on a FAIL, exactly like the build
+# gate, so it is precondition-bound to its own gate-* phase here.
 GATE_PHASE_PRECONDITIONS = {
     "gate-design-review": ["GATE_1_DESIGN"],
     "gate-plan-review": ["GATE_2_PLAN"],
     "gate-build-integrity": ["GATE_3_BUILD", "GATE_3B_SEMANTIC"],
     "gate-uat-signoff": ["GATE_4_UAT"],
+    "final-review": ["GATE_5_COMPLETENESS"],
+}
+
+# Generalized gate kick-back map (B1a) — the INVERSE of GATE_PHASE_PRECONDITIONS, keyed
+# by gate id rather than by gate-* phase. Maps EVERY gate id (mainline, side, and
+# automated) to the (producing_phase, producing_skill) pair the pipeline must rewind to
+# when that gate is recorded `failed`. On a failed gate, cmd_gate performs a GUIDED reset:
+# it sets phase.current back to the producing phase and prints the skill to re-run — it
+# does NOT auto-dispatch the skill (the human/orchestrator decides when to re-run). This
+# generalizes the old GATE_1-only targeted re-run to ALL gates. passed/waived never reset.
+#
+# The producing phase is the phase whose work feeds the gate — i.e. where the reviewed
+# artifact is (re)produced — NOT the gate-* parking phase. Resetting to the gate-* phase
+# would be a no-op loop; resetting to the producing phase rewinds the actual work.
+GATE_PRODUCING_PHASE = {
+    "GATE_0_DISCOVERY": ("survey", "anti-legacy:survey"),
+    "GATE_1_DESIGN": ("graph-translate", "anti-legacy:graph-translator"),
+    "GATE_1B_SEMANTIC_JOIN": ("semantic-join", "anti-legacy:semantic-join"),
+    "GATE_2_PLAN": ("planning", "anti-legacy:planner"),
+    "GATE_3_BUILD": ("build", "anti-legacy:swarm"),
+    "GATE_3B_SEMANTIC": ("semantic-validation", "anti-legacy:semantic-validation"),
+    "GATE_4_UAT": ("uat", "anti-legacy:uat-crew"),
+    "GATE_5_COMPLETENESS": ("document", "anti-legacy:document"),
 }
 
 # Gate statuses that satisfy a precondition (signed off, or explicit human waiver).
 _SATISFIED_GATE_STATUSES = {"passed", "waived"}
 
 # Legal phase enum values (must match schemas/manifest.schema.json phase.current enum).
+# Three phases added by B1a wiring:
+#   - functional-tests: blocking pre-build validation, AFTER gate-plan-review, BEFORE build
+#   - document:         documentation pass, AFTER gate-uat-signoff, BEFORE final-review
+#   - final-review:     automated completeness gate (GATE_5_COMPLETENESS), AFTER document,
+#                       BEFORE complete — auto-clears on a passing completeness-report and
+#                       kicks back on FAIL
 PHASE_ENUM = (
     "uninitialized",
     "survey",
@@ -59,12 +92,15 @@ PHASE_ENUM = (
     "gate-design-review",
     "planning",
     "gate-plan-review",
+    "functional-tests",
     "build",
     "target-review",
     "semantic-validation",
     "gate-build-integrity",
     "uat",
     "gate-uat-signoff",
+    "document",
+    "final-review",
     "complete",
 )
 
@@ -290,8 +326,14 @@ def cmd_gate(args):
     """Record a gate decision."""
     m = load_manifest()
 
-    if args.gate_id not in m.get("gates", {}):
-        print(f"Error: Unknown gate '{args.gate_id}'. Valid gates: {list(m.get('gates', {}).keys())}", file=sys.stderr)
+    # A gate id is valid if it is already tracked in this manifest OR it is one of the
+    # canonical gate ids manifest.py knows (GATE_PRODUCING_PHASE). The second clause lets
+    # newly-wired gates (e.g. GATE_5_COMPLETENESS) be recorded even on a manifest minted
+    # from a template that predates them — the gate row is materialized below. Genuinely
+    # unknown ids (e.g. GATE_99_FAKE) are still rejected.
+    valid_gates = set(m.get("gates", {})) | set(GATE_PRODUCING_PHASE)
+    if args.gate_id not in valid_gates:
+        print(f"Error: Unknown gate '{args.gate_id}'. Valid gates: {sorted(valid_gates)}", file=sys.stderr)
         sys.exit(1)
 
     evidence_ids = [e.strip() for e in args.evidence.split(",") if e.strip()] if args.evidence else []
@@ -325,13 +367,34 @@ def cmd_gate(args):
                   f"and re-checksum, or use --opinion waived to override.", file=sys.stderr)
             sys.exit(1)
 
+    opinion = args.opinion.lower()
     m["gates"][args.gate_id] = {
-        "status": args.opinion.lower(),
+        "status": opinion,
         "evaluator": args.evaluator,
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
         "rationale": args.rationale or "",
         "evidence_artifacts": evidence_ids
     }
+
+    # Generalized gate kick-back (B1a): recording a gate `failed` rewinds the pipeline to
+    # the phase that PRODUCES that gate's reviewed artifact, so the failing work is redone
+    # — not a full restart. This is a GUIDED reset: we set phase.current back and name the
+    # skill to re-run; we do NOT auto-dispatch it. Applies to EVERY gate, not just GATE_1.
+    # passed/waived leave the phase untouched (behavior unchanged). The reset is recorded
+    # in phase.completed-aware fashion: the producing phase is removed from `completed` so
+    # the pipeline genuinely re-enters it rather than treating it as already done.
+    kicked_back = None
+    if opinion == "failed" and args.gate_id in GATE_PRODUCING_PHASE:
+        producing_phase, producing_skill = GATE_PRODUCING_PHASE[args.gate_id]
+        prior_phase = m["phase"]["current"]
+        m["phase"]["current"] = producing_phase
+        if producing_phase in m["phase"].get("completed", []):
+            m["phase"]["completed"] = [p for p in m["phase"]["completed"] if p != producing_phase]
+        m["phase"]["blocked_reason"] = (
+            f"{args.gate_id} failed — pipeline reset to '{producing_phase}'. "
+            f"Re-run {producing_skill}, regenerate evidence, and re-present the gate."
+        )
+        kicked_back = (prior_phase, producing_phase, producing_skill)
 
     save_manifest(m)
     print(f"Gate {args.gate_id}: {args.opinion.upper()} (by {args.evaluator})")
@@ -346,6 +409,33 @@ def cmd_gate(args):
             "rationale": args.rationale or ""
         }
     })
+
+    if kicked_back is not None:
+        prior_phase, producing_phase, producing_skill = kicked_back
+        _append_audit({
+            "event": "anti-legacy:gate-kicked-back",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "details": {
+                "gate_id": args.gate_id,
+                "from_phase": prior_phase,
+                "reset_to_phase": producing_phase,
+                "re_run_skill": producing_skill,
+            }
+        })
+        print(
+            f"KICK-BACK: {args.gate_id} FAILED — pipeline phase reset {prior_phase} -> "
+            f"{producing_phase}.",
+            file=sys.stderr,
+        )
+        print(
+            f"  Re-run {producing_skill} to address the failure, regenerate its evidence, "
+            f"then re-present {args.gate_id} for sign-off.",
+            file=sys.stderr,
+        )
+        if args.rationale:
+            print(f"  Rationale on record: {args.rationale}", file=sys.stderr)
+        # Exit non-zero so callers (orchestrate, CI) can branch on a failed-gate record.
+        sys.exit(3)
 
 
 def cmd_learn(args):

@@ -78,6 +78,11 @@ except Exception:  # pragma: no cover
     HAVE_JSONSCHEMA = False
 
 
+# Sentinel distinguishing "source_kinds omitted" from "source_kinds = [...]"
+# in overlay_row (None is a meaningful value the builder must tolerate).
+_UNSET = object()
+
+
 # ---------------------------------------------------------------------------
 # Hand-built SQLite fixture (identical schema to tests/test_we_cluster.py,
 # verified against a v0.0.1-indexed DB). kind_token is the bare token; it is
@@ -138,11 +143,16 @@ def build_fixture_db(path, nodes, edges):
 
 
 def overlay_row(app, sym, *, statement, confidence, status="resolved",
-                rule_id=None, name=None, provenance="ring[0]", risk_reason=None):
+                rule_id=None, name=None, provenance="ring[0]", risk_reason=None,
+                source_kinds=_UNSET):
     """One annotations.jsonl overlay record (the shape extract.annotate() writes:
     db_id keyed to the app name, plus the rule_object fields). Only the keys the
     builder reads are needed; extra keys are tolerated (and we add a couple to
-    prove they do NOT leak into the schema-strict rule object)."""
+    prove they do NOT leak into the schema-strict rule object).
+
+    `source_kinds` (GOTCHA-3): pass a list to set it — it rides through the
+    lossless overlay to the rule's provenance.source_kinds; leave it UNSET to OMIT
+    the key entirely (the overlay simply carries no such key, the absent case)."""
     rec = {
         "db_id": app,
         "symbol_id": sym,
@@ -158,6 +168,8 @@ def overlay_row(app, sym, *, statement, confidence, status="resolved",
     }
     if risk_reason is not None:
         rec["risk_reason"] = risk_reason
+    if source_kinds is not _UNSET:
+        rec["source_kinds"] = source_kinds
     return rec
 
 
@@ -1370,6 +1382,260 @@ class TestTermAwareNaming(unittest.TestCase):
     def test_build_term_index_empty_without_engine_tags(self):
         # No glossary -> no terms to look up -> empty index (graceful fallback).
         self.assertEqual(dg.build_term_index("/no/such.db", "/no/such/vocab.json"), {})
+
+
+# ===========================================================================
+# FIX #2 — WORKSPACE-ANCHORED graphs dir. Like coverage.py (ISS-23), the §I5
+# builder must resolve per-app DBs from the WORKSPACE (the resolved --config dir
+# / CWD), NOT from the __file__-anchored plugin-install location. A no-`--db`
+# multi-repo run that fell back to the plugin tree found nothing.
+# ===========================================================================
+@unittest.skipIf(dg is None, "scripts/domain_graph.py not importable: %s" % IMPORT_ERROR)
+class TestWorkspaceAnchoredGraphsDir(unittest.TestCase):
+    """The fix anchors the per-app DB directory on the resolved config's dir.
+    These tests prove resolve_app_dbs / build() do NOT depend on the
+    plugin-anchored coverage.GRAPHS_DIR fallback for the no-`--db` path."""
+
+    APP = "anchor-app"
+
+    def setUp(self):
+        # A WORKSPACE temp dir that holds config + graphs/, and a SEPARATE bogus
+        # "plugin install" dir whose graphs/ is deliberately empty/nonexistent.
+        self.workspace = tempfile.mkdtemp(prefix="dg-ws-")
+        self.graphs_dir = os.path.join(self.workspace, "graphs")
+        os.makedirs(self.graphs_dir, exist_ok=True)
+        self.req_dir = os.path.join(self.workspace, "requirements")
+        os.makedirs(self.req_dir, exist_ok=True)
+        self.plugin_dir = tempfile.mkdtemp(prefix="dg-plugin-")
+        self.bogus_graphs = os.path.join(self.plugin_dir, "graphs")  # never created
+
+        self.config_path = os.path.join(self.workspace, "config.json")
+        self.coverage_path = os.path.join(self.workspace, "coverage-report.json")
+        self.overlay_path = os.path.join(self.workspace, "annotations.jsonl")
+        self.output_path = os.path.join(self.req_dir, "requirements_graph.json")
+
+        self._saved_env = os.environ.get("ANTI_LEGACY_ANNOTATIONS")
+        os.environ["ANTI_LEGACY_ANNOTATIONS"] = self.overlay_path
+        # Point the PLUGIN-anchored fallbacks at the bogus dir so a regression
+        # (falling back to cov.GRAPHS_DIR / dg.DEFAULT_GRAPHS_DIR) would FAIL to
+        # find the DB. The fix must ignore both and use the workspace.
+        self._saved_cov_graphs = cov.GRAPHS_DIR
+        self._saved_dg_graphs = dg.DEFAULT_GRAPHS_DIR
+        cov.GRAPHS_DIR = self.bogus_graphs
+        dg.DEFAULT_GRAPHS_DIR = self.bogus_graphs
+
+    def tearDown(self):
+        cov.GRAPHS_DIR = self._saved_cov_graphs
+        dg.DEFAULT_GRAPHS_DIR = self._saved_dg_graphs
+        if self._saved_env is None:
+            os.environ.pop("ANTI_LEGACY_ANNOTATIONS", None)
+        else:
+            os.environ["ANTI_LEGACY_ANNOTATIONS"] = self._saved_env
+        shutil.rmtree(self.workspace, ignore_errors=True)
+        shutil.rmtree(self.plugin_dir, ignore_errors=True)
+
+    def _seed(self):
+        db_path = os.path.join(self.graphs_dir, "%s.db" % self.APP)
+        nodes = [
+            (1, "s-a", "A", "function", "f.cbl"),
+            (2, "s-b", "B", "function", "f.cbl"),
+        ]
+        edges = [(1, 2, "calls", 0.9, "f.cbl")]
+        build_fixture_db(db_path, nodes, edges)
+        write_overlay(self.overlay_path, [
+            overlay_row(self.APP, "s-a", name="A",
+                        statement="Authorize the request.", confidence=0.9),
+            overlay_row(self.APP, "s-b", name="B",
+                        statement="Authorize and route the request.", confidence=0.9),
+        ])
+        write_config(self.config_path, [self.APP])
+        write_coverage_report(self.coverage_path, coverage=1.0)
+
+    def test_resolve_app_dbs_uses_workspace_graphs_dir(self):
+        """resolve_app_dbs resolves the per-app DB under the WORKSPACE graphs dir
+        when one is passed — NOT the plugin-anchored DEFAULT_GRAPHS_DIR."""
+        self._seed()
+        config = dg.load_config(self.config_path)
+        pairs = dg.resolve_app_dbs(config, graphs_dir=self.graphs_dir)
+        self.assertEqual(len(pairs), 1)
+        name, db_path = pairs[0]
+        self.assertEqual(name, self.APP)
+        self.assertEqual(db_path, os.path.join(self.graphs_dir, "%s.db" % self.APP))
+        # And it is NOT the bogus plugin path.
+        self.assertNotIn(self.bogus_graphs, db_path)
+
+    def test_resolve_app_dbs_falls_back_to_plugin_dir_without_hint(self):
+        """With NO graphs_dir hint the helper falls back to DEFAULT_GRAPHS_DIR —
+        the very fallback the fix avoids in build(). This pins the contract that
+        the workspace anchoring lives in build(), not in a silent default."""
+        self._seed()
+        config = dg.load_config(self.config_path)
+        _name, db_path = dg.resolve_app_dbs(config)[0]
+        self.assertTrue(db_path.startswith(self.bogus_graphs),
+                        "no-hint default must be the plugin-anchored fallback")
+
+    def test_build_resolves_dbs_from_config_dir_not_plugin(self):
+        """End-to-end: build() with ONLY a workspace config_path (no --db, no
+        graphs_dir) finds the DB under the config's own dir — even though the
+        plugin-anchored fallbacks point at an empty dir. Before the fix this
+        raised DomainGraphError ('db not found') because resolve_app_dbs went to
+        the plugin tree."""
+        self._seed()
+        graph, roundtrip, _drops, errors = dg.build(
+            config_path=self.config_path,
+            output_path=self.output_path,
+            coverage_report_path=self.coverage_path,
+            overlay_path=self.overlay_path,
+            schema_path=SCHEMA_PATH,
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(roundtrip["roundtrip_coverage"], 1.0)
+        # The two members coalesced into one capability requirement.
+        reqs = [req for dom in graph["domains"].values()
+                for req in dom["requirements"].values()]
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(set(reqs[0]["legacy_components"]), {"s-a", "s-b"})
+
+    def test_build_explicit_graphs_dir_overrides_anchor(self):
+        """A caller may still pass an explicit graphs_dir to build(); it wins over
+        the config-dir anchor (the seam the orchestrator/runner uses)."""
+        self._seed()
+        # Move the DB into an alternate dir and point build() at it explicitly.
+        alt_dir = os.path.join(self.workspace, "alt-graphs")
+        os.makedirs(alt_dir, exist_ok=True)
+        shutil.move(
+            os.path.join(self.graphs_dir, "%s.db" % self.APP),
+            os.path.join(alt_dir, "%s.db" % self.APP),
+        )
+        graph, roundtrip, _d, errors = dg.build(
+            config_path=self.config_path,
+            output_path=self.output_path,
+            coverage_report_path=self.coverage_path,
+            overlay_path=self.overlay_path,
+            schema_path=SCHEMA_PATH,
+            graphs_dir=alt_dir,
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(roundtrip["roundtrip_coverage"], 1.0)
+
+
+# ===========================================================================
+# ISS-06 (GOTCHA-3): provenance.source_kinds — the trust-tier discriminator —
+# is POPULATED end to end. The annotation overlay's source_kinds (the grounding
+# kind(s) the extractor actually read) ride through to the emitted rule's
+# provenance.source_kinds; absence is tolerated cleanly; out-of-enum is dropped;
+# the output still validates against the enriched schema's enum-constrained slot.
+# ===========================================================================
+class TestSourceKindsPassthrough(DomainGraphTestBase):
+    APP = "sk-app"
+
+    def _build_single_member(self, source_kinds=_UNSET, statement=None):
+        """A one-member capability whose overlay carries (or omits) source_kinds;
+        returns the single requirement's only business rule object."""
+        nodes = [(1, "s-sk", "DO-IT", "function", "sk.cbl")]
+        build_fixture_db(self.db_for(self.APP), nodes, [])
+        write_overlay(self.overlay_path, [
+            overlay_row(
+                self.APP, "s-sk", name="DO-IT",
+                statement=statement or "Validate the request before processing.",
+                confidence=0.9, source_kinds=source_kinds),
+        ])
+        write_config(self.config_path, [self.APP])
+        write_coverage_report(self.coverage_path, coverage=1.0)
+        graph, _rt, _d, errors = self.run_build([self.APP])
+        self.assertEqual(errors, [], "build must succeed and be schema-valid")
+        (_rid, (_dname, req)), = self.all_requirements(graph).items()
+        self.assertEqual(len(req["business_rules"]), 1)
+        return graph, req["business_rules"][0]
+
+    def test_source_kinds_emitted_into_provenance(self):
+        """A requirement whose annotation carries source_kinds emits
+        provenance.source_kinds with exactly those (legal) values."""
+        graph, br = self._build_single_member(source_kinds=["code-body", "data-def"])
+        self.assertIn("source_kinds", br["provenance"])
+        self.assertEqual(br["provenance"]["source_kinds"], ["code-body", "data-def"])
+        # And the whole graph is still schema-valid (the enum-constrained slot).
+        self.assertEqual(self.schema_validate(graph), [])
+
+    def test_absent_source_kinds_omitted_cleanly(self):
+        """A requirement whose annotation has NO source_kinds omits the key
+        entirely (optional, non-breaking — never an empty list, never null)."""
+        graph, br = self._build_single_member(source_kinds=_UNSET)
+        self.assertNotIn("source_kinds", br["provenance"],
+                         "absent source_kinds must be omitted, not emitted empty/null")
+        # The exact provenance shape the committed graph already uses stays valid.
+        self.assertEqual(self.schema_validate(graph), [])
+
+    def test_invalid_kind_is_dropped(self):
+        """An out-of-enum source-kind is DROPPED (not emitted) so it never
+        invalidates the graph against the schema enum; legal siblings survive."""
+        graph, br = self._build_single_member(
+            source_kinds=["code-body", "hearsay", "doc"])
+        self.assertEqual(br["provenance"]["source_kinds"], ["code-body", "doc"],
+                         "the out-of-enum 'hearsay' must be dropped, legal kinds kept")
+        self.assertNotIn("hearsay", br["provenance"]["source_kinds"])
+        self.assertEqual(self.schema_validate(graph), [])
+
+    def test_all_invalid_kinds_omits_slot(self):
+        """When EVERY recorded kind is out-of-enum there is nothing legal to emit,
+        so the slot is omitted entirely (not an empty list) and the graph is valid."""
+        graph, br = self._build_single_member(source_kinds=["hearsay", "rumor"])
+        self.assertNotIn("source_kinds", br["provenance"],
+                         "all-invalid source_kinds must omit the slot, not emit []")
+        self.assertEqual(self.schema_validate(graph), [])
+
+    def test_source_kinds_deduplicated_order_preserved(self):
+        """Duplicate kinds collapse; input order is preserved (deterministic)."""
+        graph, br = self._build_single_member(
+            source_kinds=["comment", "code-body", "comment"])
+        self.assertEqual(br["provenance"]["source_kinds"], ["comment", "code-body"])
+        self.assertEqual(self.schema_validate(graph), [])
+
+    def test_non_list_source_kinds_tolerated(self):
+        """A malformed (non-list) source_kinds value is tolerated as absence —
+        the build does not crash and the slot is omitted (schema stays valid)."""
+        graph, br = self._build_single_member(source_kinds="code-body")  # a bare str
+        self.assertNotIn("source_kinds", br["provenance"])
+        self.assertEqual(self.schema_validate(graph), [])
+
+    def test_clean_source_kinds_helper_contract(self):
+        """Direct unit cover of dg._clean_source_kinds — the validation/de-noise
+        seam (legal subset, order-preserving dedup, None on nothing-to-emit)."""
+        self.assertEqual(
+            dg._clean_source_kinds(["code-body", "data-def"]),
+            ["code-body", "data-def"])
+        self.assertEqual(
+            dg._clean_source_kinds(["doc", "hearsay", "doc"]), ["doc"])
+        self.assertIsNone(dg._clean_source_kinds(["hearsay"]))
+        self.assertIsNone(dg._clean_source_kinds([]))
+        self.assertIsNone(dg._clean_source_kinds(None))
+        self.assertIsNone(dg._clean_source_kinds("code-body"))  # non-list -> None
+        # tuple is accepted (it is list-like); enum order preserved.
+        self.assertEqual(
+            dg._clean_source_kinds(("comment", "code-body")), ["comment", "code-body"])
+
+    def test_risk_member_source_kinds_also_passthrough(self):
+        """A RISK-flagged member's annotation source_kinds also rides through (the
+        review-flagged rule goes through the SAME _rule_object path). A comment-only
+        grounding is exactly the untrusted/RISK-eligible case the trust rule names."""
+        nodes = [(1, "s-rk", "MAYBE", "function", "rk.cbl")]
+        build_fixture_db(self.db_for(self.APP), nodes, [])
+        write_overlay(self.overlay_path, [
+            overlay_row(self.APP, "s-rk", name="MAYBE", statement="",
+                        confidence=0.3, status="risk",
+                        risk_reason="rule grounded only in a copybook comment",
+                        source_kinds=["comment"]),
+        ])
+        write_config(self.config_path, [self.APP])
+        write_coverage_report(self.coverage_path, coverage=1.0)
+        graph, _rt, _d, errors = self.run_build([self.APP])
+        self.assertEqual(errors, [])
+        (_rid, (_dname, req)), = self.all_requirements(graph).items()
+        self.assertEqual(req["status"], "review")
+        (br,) = req["business_rules"]
+        self.assertEqual(br["provenance"]["source_kinds"], ["comment"])
+        # Comment-only grounding -> the reference trust predicate says untrusted.
+        self.assertEqual(self.schema_validate(graph), [])
 
 
 if __name__ == "__main__":

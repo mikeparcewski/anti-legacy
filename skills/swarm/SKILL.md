@@ -166,6 +166,72 @@ Test file path: {test_file_path}
 For CLIs that do not support `@agent` dispatch, run inline with the above
 context as your own instruction set.
 
+### Java rule-annotation setup (multi-rule mappings)
+
+The round-trip scanner (`generate_target_graph.py`) proves rule coverage by
+reading `@ImplementsRule("<id>")` annotations (alias `@SatisfiesRule`) from the
+target source and joining each rule id back to the requirements graph. One
+component frequently implements **several** rules — a service that enforces
+`RULE-001`, `RULE-002`, and `VAL-003`. To map all of them onto one element you
+**stack** the annotation:
+
+```java
+@ImplementsRule("RULE-001")
+@ImplementsRule("RULE-002")
+@ImplementsRule("VAL-003")
+public class InterestCalculator { ... }
+```
+
+Plain Java does **not** allow the same annotation twice on one element. The
+anti-legacy standard library ships the two annotation declarations that make
+the repeat legal — `@ImplementsRule` declared `@Repeatable(ImplementsRules.class)`
+with a `String value()`, and the container `@ImplementsRules` with an
+`ImplementsRule[] value()`. The compiler folds the stacked repeats into the
+container automatically; without the container, stacking is a compile error
+(`ImplementsRule is not a repeatable annotation type`).
+
+**When the target stack is Java/Kotlin (or any JVM `target_stack`), the
+coordinator MUST ensure these templates exist in the target tree before
+dispatching annotation-bearing tasks.** They are plugin-root templates, so copy
+them once (idempotent) into a `annotations` package under the target source
+root, then change each file's `package` line to match the target's package
+layout:
+
+```bash
+# Copy the two standard rule-annotation templates into the target tree.
+# {plugin_root_abs} is the resolved plugin root (same one setup baked into run.py);
+# {target_path} comes from config.json. The destination package dir is created if absent.
+python3 -c "
+import os, shutil, sys
+plugin_root = r'{plugin_root_abs}'
+dest = os.path.join(r'{target_path}', 'src', 'main', 'java', 'annotations')
+os.makedirs(dest, exist_ok=True)
+for name in ('ImplementsRule.java', 'ImplementsRules.java'):
+    src = os.path.join(plugin_root, 'templates', name)
+    out = os.path.join(dest, name)
+    if not os.path.exists(out):
+        shutil.copyfile(src, out)
+        print('copied', name, '->', out)
+    else:
+        print('exists', out)
+print('NOTE: edit the package line in both copies to match the target package layout.')
+"
+```
+
+Then, in the dispatch context for a multi-rule task, instruct the subagent
+explicitly: *"Import `<your.package>.annotations.ImplementsRule` and stack one
+`@ImplementsRule("<id>")` per rule/validation/error id you implement on the
+class or method — the annotation is `@Repeatable`, so multiple are allowed.
+Do not invent a new annotation name; the scanner only matches `@ImplementsRule`
+and `@SatisfiesRule`."* Stacking N annotations records N rule ids; a single
+component therefore covers all of its rules without a compiler error and the
+round-trip coverage proof sees every one.
+
+For non-JVM stacks the scanner uses other anchors — C# attribute
+`[ImplementsRule("<id>")]` (also stackable in C#), or a bare rule-id
+line-comment (`// RULE-001`, `# RULE-001`, etc.) for Go/Python/TypeScript. The
+two Java templates apply only to the JVM target path.
+
 ## Step 5: Review and merge subagent output
 
 After the subagent completes:

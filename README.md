@@ -64,7 +64,7 @@ The survey phase runs **wicked-estate index** once over each source repo — one
 **Mainframe estate**: COBOL/JCL/CICS/IMS/DB2 — modules, paragraphs, fields, JCL steps/datasets, CICS programs/maps, IMS databases/segments, DB2 tables  
 **Modern**: Java, C#, Python, TypeScript, Go, Kotlin, Rust, and other languages the engine indexes
 
-For source the engine cannot index, `anti-legacy:survey-modern` is a thin find+grep+LLM fallback that produces the same node shape.
+There is no separate "modern" survey track: modern languages are indexed by the same `anti-legacy:survey` pass as the mainframe estate. (`anti-legacy:survey-modern` is retired — a do-nothing redirect stub kept only so stale references resolve.)
 
 ---
 

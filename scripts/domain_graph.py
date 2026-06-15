@@ -75,6 +75,10 @@ DEFAULT_OUTPUT = os.path.join(
 DEFAULT_COVERAGE_REPORT = os.path.join(
     REPO_ROOT, ".anti-legacy", "coverage-report.json"
 )
+# Per-app graph DBs default location. Like coverage.GRAPHS_DIR this is the
+# __file__-anchored (plugin-install) fallback ONLY — production runs anchor the
+# graphs dir on the WORKSPACE (the resolved --config dir / CWD), never here.
+DEFAULT_GRAPHS_DIR = os.path.join(REPO_ROOT, ".anti-legacy", "graphs")
 SCHEMA_PATH = os.path.join(
     REPO_ROOT, "schemas", "requirements-graph.enriched.schema.json"
 )
@@ -180,10 +184,19 @@ def assert_front_half_coverage(coverage_report_path: str) -> dict:
     return report
 
 
-def resolve_app_dbs(config: dict, explicit_db=None):
+def resolve_app_dbs(config: dict, explicit_db=None, graphs_dir=None):
     """Resolve (app_name, db_path) pairs — the SAME pattern coverage.resolve_app_dbs
-    uses, so the §I5 denominator matches the front-half denominator exactly."""
-    return cov.resolve_app_dbs(config, explicit_db=explicit_db)
+    uses, so the §I5 denominator matches the front-half denominator exactly.
+
+    `graphs_dir` is the directory the per-app DBs live in. It MUST be anchored on
+    the WORKSPACE (beside the loaded config), not on this script's plugin-install
+    location — `build()` derives it from the resolved config dir and threads it
+    here. Without it a no-`--db` multi-repo run falls back to coverage.GRAPHS_DIR
+    (the `__file__`-anchored plugin tree) and finds nothing — the ISS-23 trap that
+    coverage.py already fixed for its own path."""
+    if graphs_dir is None:
+        graphs_dir = DEFAULT_GRAPHS_DIR
+    return cov.resolve_app_dbs(config, explicit_db=explicit_db, graphs_dir=graphs_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -474,10 +487,45 @@ def _clamp_conf(value):
     return c
 
 
+# GOTCHA-3 trust-tier discriminator. The enriched schema declares
+# provenance.source_kinds as an OPTIONAL enum array; these four are the ONLY
+# legal members. A rule is trusted_verified ONLY when grounded in code-body
+# and/or data-def; comment/doc-only grounding is untrusted (RISK-eligible). See
+# schemas/requirements-graph.enriched.schema.json + tests/test_provenance_trust.py.
+_SOURCE_KIND_ENUM = ("code-body", "data-def", "comment", "doc")
+
+
+def _clean_source_kinds(value):
+    """Validate + de-noise the annotation's source_kinds for emission into the
+    rule object's provenance.
+
+    Returns a list of legal source-kind strings (input order preserved,
+    de-duplicated), or None when there is nothing schema-valid to emit — absent,
+    not a list/tuple, or EVERY entry out-of-enum. The slot is OPTIONAL: absence is
+    tolerated cleanly (None -> the key is omitted), and an invalid kind is DROPPED
+    rather than failing the build, so a stray value never invalidates the
+    otherwise-good graph against the enum-constrained schema."""
+    if not isinstance(value, (list, tuple)):
+        return None
+    cleaned = []
+    seen = set()
+    for k in value:
+        if k in _SOURCE_KIND_ENUM and k not in seen:
+            seen.add(k)
+            cleaned.append(k)
+    return cleaned or None
+
+
 def _rule_object(rule_id, statement, symbol_id, app_name, annotation):
     """Build a schema-legal business_rules item (the whitelisted five keys only:
     id, statement, source_ref, confidence, provenance). The overlay's extra keys
-    (raw_confidence, ring_depth, cluster, status, ...) MUST NOT leak in."""
+    (raw_confidence, ring_depth, cluster, status, ...) MUST NOT leak in.
+
+    GOTCHA-3: the annotation's `source_kinds` (the grounding kind(s) the extractor
+    actually read — code-body | data-def | comment | doc) ride through into
+    `provenance.source_kinds` so the trust tier is computable downstream. Validated
+    against the schema enum, de-duplicated, and OPTIONAL (omitted cleanly when the
+    annotation carries none / only out-of-enum values)."""
     obj = {
         "id": rule_id,
         "statement": statement or "RISK",
@@ -495,6 +543,12 @@ def _rule_object(rule_id, statement, symbol_id, app_name, annotation):
         prov["program"] = str(program)
     if ref is not None:
         prov["ref"] = str(ref)
+    # GOTCHA-3 source-kind passthrough (the trust-tier discriminator). The
+    # annotation overlay is lossless (--rule-object passes arbitrary keys), so
+    # `source_kinds` arrives here when the extractor recorded it.
+    kinds = _clean_source_kinds(annotation.get("source_kinds")) if annotation else None
+    if kinds:
+        prov["source_kinds"] = kinds
     obj["provenance"] = prov
     return obj
 
@@ -1150,16 +1204,32 @@ def build(
     skip_front_half=False,
     net_new_path=None,
     vocab_path=DEFAULT_VOCAB_PATH,
+    graphs_dir=None,
 ):
     """Full §I5 build. Returns (graph, roundtrip, drop_manifest, schema_errors).
     Raises DomainGraphError on any gate failure (front-half<1.0, schema-invalid,
     roundtrip<1.0). Writes the three artifacts on success.
+
+    `graphs_dir` is the per-app DB directory. When None it is anchored on the
+    WORKSPACE — the directory of the resolved `config_path`, i.e. beside the
+    config we actually loaded — NOT this script's plugin-install dir. This fixes
+    the no-`--db` (multi-repo) path that otherwise searches the plugin tree and
+    finds nothing (the same ISS-23 fix coverage.py applied to its own path).
     """
     config = load_config(config_path)
     settings = cov.coverage_settings(config)
     migration_mode = config.get("migration_mode", "functional")
     if migration_mode not in ("structural", "functional"):
         migration_mode = "functional"
+
+    # Per-app graph DBs live under the WORKSPACE .anti-legacy/graphs — beside the
+    # config we actually loaded — NOT this script's plugin-install dir (the
+    # `__file__`-anchored DEFAULT_GRAPHS_DIR). Anchoring on the resolved config's
+    # directory fixes the no-`--db` (multi-repo) path. (ISS-23)
+    if graphs_dir is None:
+        graphs_dir = os.path.join(
+            os.path.dirname(os.path.abspath(config_path)), "graphs"
+        )
 
     # (A) front-half precondition (the report-file scalar gate).
     if not skip_front_half:
@@ -1171,7 +1241,7 @@ def build(
 
     # Per-app gather (cluster() / list_nodes() are single-db).
     apps = []
-    for app_name, db_path in resolve_app_dbs(config, explicit_db):
+    for app_name, db_path in resolve_app_dbs(config, explicit_db, graphs_dir=graphs_dir):
         apps.append(gather_app(app_name, db_path, settings, overlay_index,
                                vocab_path=vocab_path))
 

@@ -78,7 +78,7 @@ Each phase is a skill invocation. You can run them from any Antigravity session 
 
 Runs `wicked-estate index` over each source repo, producing a per-repo code graph under `.anti-legacy/graphs/<app>.db` and registering a deterministic stats digest (`.anti-legacy/legacy-graph.digest.txt`) as the checksummed `legacy-graph` evidence. One engine indexes the mainframe estate and modern languages in the same pass — no language routing. The skill tells you what it found: node/edge counts, the programs/tables discovered, any app that indexed to an empty graph.
 
-If an app shows zero nodes, check that the source path in config.json is correct and that the files are a language wicked-estate indexes. For source the engine can't index, run `anti-legacy:survey-modern` as a find+grep fallback. The graph DBs are gitignored and rebuilt on demand; the committed evidence is the digest.
+If an app shows zero nodes, check that the source path in config.json is correct and that the files are a language wicked-estate indexes — modern stacks (Java, C#, Go, TypeScript, Python, …) are indexed by this same `survey` pass, there is no separate modern track to fall back to. (`anti-legacy:survey-modern` is retired — a do-nothing redirect stub; do not run it.) The graph DBs are gitignored and rebuilt on demand; the committed evidence is the digest.
 
 ### Phase 2 — Analyze
 
@@ -365,7 +365,7 @@ The requirements graph is domain-scoped. You can run the swarm for a single doma
 ## Troubleshooting
 
 **Survey shows zero nodes for an app**  
-The source path may be wrong, or the files are a language wicked-estate doesn't index. Check the `path` in config.json, and confirm the engine resolves — survey uses `config.json` key `wicked_estate_path`, then `WICKED_ESTATE_PATH`, then PATH, then the wicked-estate release fallback; if none resolve it errors with instructions to set `wicked_estate_path` (it never silently degrades). For source the engine can't index, run `anti-legacy:survey-modern` directly with the path and inspect the grep output.
+The source path may be wrong, or the files are a language wicked-estate doesn't index. Check the `path` in config.json, and confirm the engine resolves — survey uses `config.json` key `wicked_estate_path`, then `WICKED_ESTATE_PATH`, then PATH, then the wicked-estate release fallback; if none resolve it errors with instructions to set `wicked_estate_path` (it never silently degrades). Modern languages are covered by this same pass — there is no separate modern survey track (`anti-legacy:survey-modern` is retired, a do-nothing redirect stub).
 
 **Extraction RISK-flags more nodes than expected**  
 A node is RISK-flagged when the crawl hits the ring/context budget (`crawl.max_rings`, `crawl.context_budget_chars` in config.json) or the rule is genuinely ambiguous. If a node looks thin, it may be a coordinator whose real logic is in called subprograms — extraction follows those edges via ring expansion, so widening `max_rings` can resolve it. Otherwise the flag is correct: it goes on the Gate 1 research queue rather than being guessed at. Inspect `.anti-legacy/annotations.jsonl` for the `risk_reason` and `ring_depth`.

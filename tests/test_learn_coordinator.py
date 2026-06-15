@@ -156,5 +156,13 @@ class TestLearnCoordinator(unittest.TestCase):
         summary, details = analyze_phase("setup", self.test_dir)
         self.assertIn("Setup Phase", summary)
 
+    def test_survey_modern_falls_through_to_generic_not_survey(self):
+        # ISS-17: 'survey-modern' is retired — it produces no graph evidence, so
+        # it must NOT be summarized as a survey; it falls through to the generic
+        # handler rather than being routed to analyze_survey.
+        summary, _ = analyze_phase("survey-modern", self.test_dir)
+        self.assertIn("Completed Phase: survey-modern", summary)
+        self.assertNotIn("Survey Phase", summary)
+
 if __name__ == "__main__":
     unittest.main()

@@ -593,5 +593,178 @@ class TestChangedSinceNativeAdjunct(unittest.TestCase):
         self.assertEqual(res["count"], 0)
 
 
+# ---------------------------------------------------------------------------
+# ISS-20 (name-collision fingerprint): the body-hash shim previously keyed the
+# baseline body cache by NAME via source(db, name), which CONCATENATES every
+# match into one blob — so the 21 carddemo MAIN-PARA nodes all shared ONE
+# fingerprint (one edit moved ALL of them). The fix splits source() into PER-MATCH
+# bodies (source_by_match) keyed by file, so each colliding symbol_id gets its OWN
+# distinct fingerprint.
+#
+# SHIM-LEVEL: monkeypatch we._run to return a canned multi-match `source` blob
+# mirroring the engine's `[Kind] name @ file:line` header format — no binary.
+# ---------------------------------------------------------------------------
+@unittest.skipIf(we is None, f"scripts/wicked_estate.py not importable yet: {HELPER_IMPORT_ERROR}")
+class TestSourceByMatchSplit(unittest.TestCase):
+    """source_by_match() splits the concatenated `source` blob into per-node bodies."""
+
+    # Two files define MAIN-PARA with DIFFERENT bodies, a third repeats file A's body.
+    # The count banner + per-match headers mirror the real engine output exactly.
+    CANNED = (
+        "3 match(es) for 'MAIN-PARA':\n"
+        "  [Function] MAIN-PARA @ app/cbl/COUSR00C.cbl:98\n"
+        "MAIN-PARA.\n"
+        "    MOVE 1 TO WS-A\n"
+        "\n"
+        "  [Function] MAIN-PARA @ app/cbl/COUSR01C.cbl:71\n"
+        "MAIN-PARA.\n"
+        "    MOVE 2 TO WS-B\n"
+        "\n"
+        "  [Function] MAIN-PARA @ app/cbl/COSGN00C.cbl:73\n"
+        "MAIN-PARA.\n"
+        "    MOVE 1 TO WS-A\n"
+    )
+
+    def setUp(self):
+        self._orig_run = we._run
+
+    def tearDown(self):
+        we._run = self._orig_run
+
+    def _install(self, canned):
+        def fake_run(args, *, timeout, cwd=".", binary=None):
+            # source_by_match shells `source <name> --db <db>`.
+            self.assertEqual(args[0], "source")
+            return canned
+        we._run = fake_run
+
+    def test_splits_into_one_record_per_match(self):
+        """A 3-match blob -> 3 records, each carrying its OWN file + body."""
+        self._install(self.CANNED)
+        recs = we.source_by_match("ignored.db", "MAIN-PARA")
+        self.assertEqual(len(recs), 3)
+        files = [os.path.basename(r["file"]) for r in recs]
+        self.assertEqual(files, ["COUSR00C.cbl", "COUSR01C.cbl", "COSGN00C.cbl"])
+        # The body BELOW each header is attributed to that match (not concatenated).
+        self.assertIn("MOVE 1 TO WS-A", recs[0]["body"])
+        self.assertNotIn("MOVE 2 TO WS-B", recs[0]["body"])
+        self.assertIn("MOVE 2 TO WS-B", recs[1]["body"])
+        self.assertNotIn("MOVE 1 TO WS-A", recs[1]["body"])
+
+    def test_distinct_bodies_get_distinct_hashes_identical_bodies_collide(self):
+        """Hashing the per-match bodies: the two byte-identical bodies (file A & C)
+        share a hash; the different body (file B) does NOT — proving per-node
+        attribution, not one-blob aliasing."""
+        self._install(self.CANNED)
+        recs = we.source_by_match("ignored.db", "MAIN-PARA")
+        h = [we._hash_body(r["body"]) for r in recs]
+        self.assertEqual(h[0], h[2], "byte-identical paragraph bodies hash equal")
+        self.assertNotEqual(h[0], h[1], "a genuinely different body must hash differently")
+        # The PRIOR (buggy) behavior would give ALL THREE the same concatenated hash.
+        self.assertEqual(len(set(h)), 2, "expected exactly 2 distinct hashes, not 1 (aliased) or 3")
+
+    def test_header_parser_extracts_file_and_line(self):
+        """_parse_source_match_header reads the `[Kind] name @ file:line` disambiguator."""
+        hdr = we._parse_source_match_header("  [Function] MAIN-PARA @ app/cbl/COUSR00C.cbl:98")
+        self.assertEqual(hdr["kind"], "Function")
+        self.assertEqual(hdr["name"], "MAIN-PARA")
+        self.assertEqual(hdr["file"], "app/cbl/COUSR00C.cbl")
+        self.assertEqual(hdr["line"], 98)
+        # Non-header lines (banner, body) return None.
+        self.assertIsNone(we._parse_source_match_header("3 match(es) for 'MAIN-PARA':"))
+        self.assertIsNone(we._parse_source_match_header("MAIN-PARA."))
+
+    def test_single_match_returns_one_record(self):
+        """A name with one match (single header) -> a one-element list."""
+        self._install(
+            "1 match(es) for 'beta':\n"
+            "  [Function] beta @ chain.py:4\n"
+            "    return y * 2\n"
+        )
+        recs = we.source_by_match("ignored.db", "beta")
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(os.path.basename(recs[0]["file"]), "chain.py")
+        self.assertIn("return y * 2", recs[0]["body"])
+
+
+# ---------------------------------------------------------------------------
+# ISS-20 NATIVE: real engine fixture with a genuine name collision (two files
+# defining `beta` with DIFFERENT bodies). The baseline fingerprint() map must give
+# each colliding symbol_id its OWN fingerprint — the regression the bug would fail.
+# ---------------------------------------------------------------------------
+@unittest.skipIf(we is None, f"scripts/wicked_estate.py not importable yet: {HELPER_IMPORT_ERROR}")
+@unittest.skipIf(BINARY is None, "wicked-estate binary not available")
+class TestFingerprintCollisionFreeBaseline(unittest.TestCase):
+    """Baseline fingerprint() gives name-colliding nodes DISTINCT fingerprints (ISS-20)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="we-collide-baseline-")
+        self.src = os.path.join(self.tmpdir, "src")
+        os.makedirs(self.src, exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _index(self, files):
+        for fname, body in files.items():
+            with open(os.path.join(self.src, fname), "w") as f:
+                f.write(body)
+        db = os.path.join(self.tmpdir, "g.db")
+        subprocess.run(
+            [BINARY, "index", self.src, "--db", db],
+            capture_output=True, text=True, check=True,
+        )
+        return db
+
+    def test_colliding_names_get_distinct_fingerprints(self):
+        """Two files defining `beta` with DIFFERENT bodies -> two symbol_ids, two
+        DISTINCT fingerprints in the baseline map (NOT one aliased hash)."""
+        db = self._index({
+            "a.py": "def beta(y):\n    return y * 2\n",
+            "b.py": "def beta(y):\n    return y - 9\n",   # different body
+        })
+        sids = we.resolve_symbol_id(db, "beta")
+        if len(sids) < 2:
+            self.skipTest(f"engine did not produce a beta collision: {sids!r}")
+        base = we.fingerprint(db, node=None, binary=BINARY)
+        fps = base["fingerprints"]
+        beta_fps = {sid: fps.get(sid) for sid in sids}
+        for sid in sids:
+            self.assertIn(sid, fps, f"every colliding symbol_id must be in the baseline: {sid}")
+            self.assertTrue(beta_fps[sid], f"{sid} should have a non-empty fingerprint")
+        # THE ISS-20 ASSERTION: the two different-bodied betas hash DIFFERENTLY.
+        distinct = set(beta_fps.values())
+        self.assertEqual(
+            len(distinct), 2,
+            f"name-colliding nodes with different bodies must get distinct "
+            f"fingerprints (ISS-20); got {beta_fps!r}",
+        )
+        # Each baseline fingerprint matches the exact single-node (file-scoped) hash.
+        for fname in ("a.py", "b.py"):
+            single = we.fingerprint(db, "beta", file=fname, binary=BINARY)
+            self.assertIn(single["fingerprint"], distinct)
+
+    def test_identical_bodies_collision_still_per_node_keyed(self):
+        """Two files with the SAME `beta` body share a fingerprint (correct — same
+        content), but each symbol_id is still INDEPENDENTLY keyed in the map (so an
+        edit to ONE later moves only that one)."""
+        db = self._index({
+            "a.py": "def beta(y):\n    return y * 2\n",
+            "b.py": "def beta(y):\n    return y * 2\n",   # identical body
+        })
+        sids = we.resolve_symbol_id(db, "beta")
+        if len(sids) < 2:
+            self.skipTest(f"engine did not produce a beta collision: {sids!r}")
+        base = we.fingerprint(db, node=None, binary=BINARY)
+        fps = base["fingerprints"]
+        # Both present and keyed by their OWN symbol_id (not one shared key).
+        self.assertEqual(len({s for s in sids}), len(sids))
+        for sid in sids:
+            self.assertIn(sid, fps)
+            self.assertTrue(fps[sid])
+        # Same body -> same hash is correct here (content equality, not aliasing).
+        self.assertEqual(len({fps[sid] for sid in sids}), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ Discovers compilation, code quality, and security tools on the host environment,
 executes them based on target stack requirements, and enforces gate blockers.
 """
 import os
+import re
 import sys
 import json
 import shutil
@@ -14,6 +15,15 @@ from datetime import datetime, timezone
 
 # Add parent directory to sys.path so we can import other scripts
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Numeric/money output detector (mirrors domain_graph._PARITY_PATTERNS). A
+# requirement whose rule text matches this MUST carry `parity_hints` or the
+# COMP-3 precision-loss Universal Don't ships silently (ISS-06).
+_NUMERIC_RULE_RE = re.compile(
+    r"\b(rate|apr|apy|yield|basis[\s-]?point|bps|percent|percentage|pct|count|"
+    r"number\s+of|qty|quantity|amount|amt|balance|total|subtotal|price|cost|fee|"
+    r"charge|payment|credit|debit|limit|due|principal|interest|dollar|currency|"
+    r"cent|comp-?3|packed[\s-]?decimal)\b|%", re.I)
 
 # Default tool mappings per target stack
 DEFAULT_TOOLS = {
@@ -163,6 +173,20 @@ class ValidatorRunner:
                     for req_id, req in reqs.items():
                         if not req.get("legacy_components"):
                             errors.append(f"Design Compliance: Requirement '{req_id}' has no legacy component traceability.")
+                        # Parity gate (ISS-06): a numeric/money output must carry
+                        # parity_hints, else test-strategy gets no signal to emit
+                        # parity_rules and COMP-3 precision loss ships silently.
+                        # Fires for any requirement that is NOT explicitly dropped
+                        # (unresolvable) — active/review/unstated all need parity.
+                        if req.get("status") != "unresolvable" and not req.get("parity_hints"):
+                            for br in req.get("business_rules") or []:
+                                txt = br.get("statement", "") if isinstance(br, dict) else str(br)
+                                if _NUMERIC_RULE_RE.search(txt or ""):
+                                    errors.append(
+                                        f"Design Compliance: Requirement '{req_id}' has a "
+                                        f"money/rate/percent/count rule but no parity_hints — "
+                                        f"numeric outputs MUST carry parity_hints (COMP-3 Universal Don't).")
+                                    break
 
                 # Real schema gate: validate the whole graph against the enriched
                 # profile. This replaces the weak `if not req.get("business_rules")`
@@ -320,7 +344,65 @@ class ValidatorRunner:
         if not self._check_round_trip_coverage():
             success = False
 
+        # 5. Functional-acceptance check (ISS-14).
+        # The post-build functional test runner (test_runner.py) writes
+        # functional-test-report.json with a real pass/fail per scenario executed
+        # against the BUILT target. When that report is present it MUST be PASS to
+        # clear build integrity — an ERROR (unsupported stack / missing toolchain)
+        # or FAIL blocks the gate, preserving the no-false-positive property. The
+        # check is vacuous-safe at THIS layer (it only fires when the report
+        # exists) because target-review's own done-gate is what hard-requires the
+        # report to be produced; absence is surfaced there, not phantom-passed.
+        if not self._check_functional_acceptance():
+            success = False
+
         return success
+
+    def _check_functional_acceptance(self):
+        """ISS-14: post-build functional-acceptance gate.
+
+        Reads .anti-legacy/evidence/functional-test-report.json under the
+        workspace. When the report is ABSENT this returns True (vacuous) — the
+        hard requirement that the report exist lives in target-review's done-gate,
+        not here, so existing build flows that have not yet run the functional
+        runner are not retroactively broken. When the report is PRESENT it must
+        carry status == 'PASS'; any other value (FAIL / ERROR / unsupported
+        stack) BLOCKS the gate. There is no path where a non-PASS report clears.
+        """
+        report_path = os.path.join(
+            self.workspace, ".anti-legacy", "evidence",
+            "functional-test-report.json"
+        )
+        if not os.path.exists(report_path):
+            # Vacuous at this layer; target-review's done-gate enforces presence.
+            return True
+
+        try:
+            with open(report_path) as f:
+                report = json.load(f)
+        except Exception as e:
+            print(
+                f"GATE_3_BUILD: BLOCK - could not parse functional-test-report.json: {e}",
+                file=sys.stderr,
+            )
+            return False
+
+        status = str(report.get("status", "")).upper()
+        if status == "PASS":
+            print("GATE_3_BUILD: Functional-acceptance check PASSED (functional-test-report status=PASS). ✓")
+            return True
+
+        fail_count = report.get("fail_count")
+        error_count = report.get("error_count")
+        print(
+            "GATE_3_BUILD: BLOCK - functional-test-report.json status is "
+            f"{status or 'UNKNOWN'} (fail_count={fail_count}, error_count={error_count}); "
+            "the post-build functional acceptance run did not pass. An ERROR means "
+            "the runner could not execute (unsupported stack / missing toolchain) "
+            "and is NOT a pass.",
+            file=sys.stderr,
+        )
+        return False
 
     def _check_round_trip_coverage(self):
         """M1: deterministic round-trip rule-coverage gate.

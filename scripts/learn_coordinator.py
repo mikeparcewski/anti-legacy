@@ -118,8 +118,8 @@ def analyze_planner(manifest, workspace_dir="."):
                 cfg = json.load(f)
                 strategy = cfg.get("traversal_strategy", "bottom-up")
                 task_path = cfg.get("paths", {}).get("task_plan")
-        except:
-            pass
+        except (OSError, ValueError):
+            pass  # missing/unreadable file or malformed JSON — optional context
             
     if not task_path:
         task_path = os.path.join(workspace_dir, ".anti-legacy", "task.md")
@@ -149,8 +149,8 @@ def analyze_swarm(manifest, workspace_dir="."):
             with open(config_path) as f:
                 cfg = json.load(f)
                 task_path = cfg.get("paths", {}).get("task_plan")
-        except:
-            pass
+        except (OSError, ValueError):
+            pass  # missing/unreadable file or malformed JSON — optional context
             
     if not task_path:
         task_path = os.path.join(workspace_dir, ".anti-legacy", "task.md")
@@ -184,16 +184,16 @@ def analyze_target_review(manifest, workspace_dir="."):
             with open(integrity_path) as f:
                 data = json.load(f)
                 status = data.get("status", "unknown")
-        except:
-            pass
+        except (OSError, ValueError):
+            pass  # missing/unreadable file or malformed JSON — optional context
             
     if os.path.exists(report_path):
         try:
             with open(report_path) as f:
                 rep = json.load(f)
                 test_summary = f"{rep.get('passed', 0)} passed, {rep.get('failed', 0)} failed"
-        except:
-            pass
+        except (OSError, ValueError):
+            pass  # missing/unreadable file or malformed JSON — optional context
             
     summary = f"Target Review Phase: Build status is '{status}'. Parity testing: {test_summary}."
     details = f"- Build Integrity: {status}\n"
@@ -228,8 +228,8 @@ def analyze_uat(manifest, workspace_dir="."):
                 verdict = "PASS"
             elif "FAIL" in content:
                 verdict = "FAIL"
-        except:
-            pass
+        except (OSError, ValueError):
+            pass  # missing/unreadable file or malformed JSON — optional context
     summary = f"UAT Crew Phase: Independent validation completed. Overall verdict: {verdict}."
     details = f"- Verdict: {verdict}\n"
     return summary, details
@@ -251,7 +251,12 @@ def analyze_phase(phase, workspace_dir="."):
     
     if phase == "setup":
         return analyze_setup(manifest, workspace_dir)
-    elif phase in ["survey", "survey-modern"]:
+    elif phase == "survey":
+        # "survey-modern" is intentionally NOT routed here: it is a retired,
+        # do-nothing redirect stub (modern languages are indexed by the single
+        # `survey` / wicked-estate pass). It is not an active phase and produces
+        # no graph evidence, so it must not be summarized as if it did — any
+        # stray "survey-modern" string falls through to the generic fallback.
         return analyze_survey(manifest, workspace_dir)
     elif phase == "planner":
         return analyze_planner(manifest, workspace_dir)
