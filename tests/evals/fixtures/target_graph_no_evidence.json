@@ -1,0 +1,31 @@
+{
+  "_comment": "SYNTHETIC target graph for the theory-eval harness, mirroring the REAL target_graph.json shape that compare_graphs.py reads: domains -> { package, components, entities }, components keyed by class NAME with { type, file_path }. This is the BASELINE 'hollow' graph: it CONTAINS the mapped class XService but carries NO rule-level evidence (the per-component rule-evidence array the fixed compare_graphs reads is absent everywhere).",
+  "_design": {
+    "PROVES_T4": "Under today's compare_graphs.py, REQ_X is marked PASS purely because a component named 'XService' exists -- even though XService implements ZERO of REQ_X's RULE-001/RULE-002/VAL-001/ERR-001. That is the hollow round-trip T4 exposes: 'done' = a class is spelled correctly, not that the rules are implemented.",
+    "NO_RULE_EVIDENCE": "Intentionally there is NO rule-evidence array on any component (the field compare_graphs reads to score coverage). The post-fix compare_graphs should compute coverage 0/4 for REQ_X against THIS graph -> PARTIAL/FAIL, never PASS. T4's PASS case supplies a separate inline/derived target graph that DOES carry rule evidence at full coverage.",
+    "ENTITY_PRESENT": "An XService-adjacent Customer entity is included so the graph is shaped like the real one; entities are not what the done-check turns on."
+  },
+  "generated_at": "synthetic",
+  "target_path": "./target/demoapp",
+  "domains": {
+    "customer": {
+      "package": "com.demoapp.customer",
+      "components": {
+        "XService": {
+          "type": "service",
+          "file_path": "target/demoapp/src/main/java/com/demoapp/customer/XService.java"
+        }
+      },
+      "entities": {
+        "Customer": {
+          "table_name": "customer",
+          "columns": [
+            { "name": "id", "type": "String" },
+            { "name": "account_status", "type": "String" }
+          ],
+          "file_path": "target/demoapp/src/main/java/com/demoapp/customer/Customer.java"
+        }
+      }
+    }
+  }
+}

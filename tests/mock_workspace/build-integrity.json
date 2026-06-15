@@ -1,0 +1,12 @@
+{
+  "scope": "build",
+  "phase": "compilation",
+  "claim": "target-compiles",
+  "status": "PASS",
+  "evidence": {
+    "command": "python3 -m compileall .",
+    "exit_code": 0,
+    "stdout_snippet": "Listing '.'...\n",
+    "stderr_snippet": ""
+  }
+}

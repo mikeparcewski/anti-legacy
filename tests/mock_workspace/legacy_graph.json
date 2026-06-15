@@ -1,0 +1,66 @@
+{
+  "applications": {
+    "cobol": {
+      "path": "tests/mock_workspace/app_cobol",
+      "nodes": {
+        "BILLING": {
+          "type": "program",
+          "name": "BILLING",
+          "file_path": "BILLING.cbl",
+          "details": {
+            "language": "cobol"
+          }
+        },
+        "INVOICE": {
+          "type": "copybook",
+          "name": "INVOICE",
+          "file_path": "shared/INVOICE",
+          "details": {
+            "language": "cobol"
+          }
+        },
+        "CUST-FILE": {
+          "type": "file",
+          "name": "CUST-FILE",
+          "file_path": "dd:CUST",
+          "details": {
+            "dd_name": "CUST"
+          }
+        },
+        "CONFIG": {
+          "type": "table",
+          "name": "CONFIG",
+          "file_path": "database",
+          "details": {}
+        }
+      },
+      "edges": [
+        {
+          "source": "BILLING",
+          "target": "PAY-GATE",
+          "type": "call"
+        },
+        {
+          "source": "BILLING",
+          "target": "INVOICE",
+          "type": "copy"
+        },
+        {
+          "source": "BILLING",
+          "target": "CUST-FILE",
+          "type": "read_write"
+        },
+        {
+          "source": "BILLING",
+          "target": "CONFIG",
+          "type": "sql_access"
+        }
+      ]
+    },
+    "csharp": {
+      "path": "tests/mock_workspace/app_csharp",
+      "nodes": {},
+      "edges": []
+    }
+  }
+}

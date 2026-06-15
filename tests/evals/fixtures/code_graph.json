@@ -1,0 +1,65 @@
+{
+  "_comment": "SYNTHETIC code (legacy) graph for the theory-eval harness. Conforms to schemas/code-graph.schema.json (applications -> {path, nodes, edges}; node.type in program|table|...; edge.type in call|read_write|...). Designed to exercise T1 (capability grouping) and T2 (entity co-location).",
+  "_design": {
+    "PROG_A_CALLS_PROG_B": "PROG_A calls PROG_B -> in functional mode PROG_B (single caller) is leaf-merged INTO PROG_A, forming exactly ONE capability node (CAP_*) from two programs. In structural mode they stay as 2 separate REQ_ nodes. This is what EVAL_T1 checks (1 merged cap vs 2 reqs).",
+    "SHARED_ASSET": "Both PROG_A and PROG_B read_write the CUSTOMER table -> they share a data asset, so they belong in the same capability/domain. PROG_A also accesses CONFIG and LEDGER, so its requirement touches THREE assets that must all co-locate into its domain (EVAL_T2 subset invariant).",
+    "ISOLATED_PROG_C": "PROG_C has no callers and accesses only the ARCHIVE table -> an isolated program in its own asset domain. Present so the harness has at least one standalone program / standalone asset (entity-only-domain candidate that functional-mode suppression should fold away)."
+  },
+  "applications": {
+    "demoapp": {
+      "path": "/synthetic/demoapp",
+      "nodes": {
+        "PROG_A": {
+          "type": "program",
+          "name": "PROG_A",
+          "file_path": "demoapp/PROG_A.cbl",
+          "details": { "note": "Entry program; calls PROG_B; accesses CUSTOMER, CONFIG, LEDGER" }
+        },
+        "PROG_B": {
+          "type": "program",
+          "name": "PROG_B",
+          "file_path": "demoapp/PROG_B.cbl",
+          "details": { "note": "Called only by PROG_A (single caller -> leaf-merge target); accesses CUSTOMER" }
+        },
+        "PROG_C": {
+          "type": "program",
+          "name": "PROG_C",
+          "file_path": "demoapp/PROG_C.cbl",
+          "details": { "note": "Isolated program; no callers; accesses ARCHIVE only" }
+        },
+        "CUSTOMER": {
+          "type": "table",
+          "name": "CUSTOMER",
+          "file_path": "demoapp/copybook/CUSTOMER.cpy",
+          "details": { "note": "Shared data asset between PROG_A and PROG_B" }
+        },
+        "CONFIG": {
+          "type": "table",
+          "name": "CONFIG",
+          "file_path": "demoapp/copybook/CONFIG.cpy",
+          "details": { "note": "Accessed only by PROG_A" }
+        },
+        "LEDGER": {
+          "type": "table",
+          "name": "LEDGER",
+          "file_path": "demoapp/copybook/LEDGER.cpy",
+          "details": { "note": "Accessed only by PROG_A" }
+        },
+        "ARCHIVE": {
+          "type": "table",
+          "name": "ARCHIVE",
+          "file_path": "demoapp/copybook/ARCHIVE.cpy",
+          "details": { "note": "Accessed only by isolated PROG_C" }
+        }
+      },
+      "edges": [
+        { "source": "PROG_A", "target": "PROG_B", "type": "call" },
+        { "source": "PROG_A", "target": "CUSTOMER", "type": "read_write" },
+        { "source": "PROG_A", "target": "CONFIG", "type": "read_write" },
+        { "source": "PROG_A", "target": "LEDGER", "type": "read_write" },
+        { "source": "PROG_B", "target": "CUSTOMER", "type": "read_write" },
+        { "source": "PROG_C", "target": "ARCHIVE", "type": "read_write" }
+      ]
+    }
+  }
+}

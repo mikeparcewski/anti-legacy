@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "",
+    "source_apps": [],
+    "target_stack": "",
+    "target_path": "",
+    "deployment_target": ""
+  },
+  "phase": {
+    "current": "uninitialized",
+    "completed": []
+  },
+  "artifacts": {},
+  "gates": {
+    "GATE_0_DISCOVERY": { "status": "pending" },
+    "GATE_1_DESIGN": { "status": "pending" },
+    "GATE_1B_SEMANTIC_JOIN": { "status": "pending" },
+    "GATE_2_PLAN": { "status": "pending" },
+    "GATE_3_BUILD": { "status": "pending" },
+    "GATE_3B_SEMANTIC": { "status": "pending" },
+    "GATE_4_UAT": { "status": "pending" }
+  },
+  "learnings": []
+}

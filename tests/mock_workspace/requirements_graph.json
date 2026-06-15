@@ -1,0 +1,63 @@
+{
+  "metadata": {
+    "migration_mode": "structural"
+  },
+  "domains": {
+    "Domain_cust_file": {
+      "requirements": {},
+      "entities": {
+        "CUST-FILE": {
+          "description": "Logical entity derived from legacy asset: CUST-FILE",
+          "fields": [
+            {
+              "name": "id",
+              "type": "string",
+              "description": "Primary identifier"
+            }
+          ]
+        }
+      }
+    },
+    "Domain_config": {
+      "requirements": {
+        "REQ_BILLING": {
+          "title": "Migrate BILLING",
+          "description": "Functional rules and processing logic for BILLING (Source: cobol - BILLING.cbl). [TBD: Extract business rules via LLM]",
+          "legacy_components": [
+            "cobol:BILLING"
+          ],
+          "data_access": [
+            "CONFIG",
+            "CUST-FILE"
+          ],
+          "dependencies": [],
+          "business_rules": [],
+          "validations": [],
+          "error_paths": []
+        }
+      },
+      "entities": {
+        "CONFIG": {
+          "description": "Logical entity derived from legacy asset: CONFIG",
+          "fields": [
+            {
+              "name": "id",
+              "type": "string",
+              "description": "Primary identifier"
+            }
+          ]
+        },
+        "CUST-FILE": {
+          "description": "Logical entity derived from legacy asset: CUST-FILE",
+          "fields": [
+            {
+              "name": "id",
+              "type": "string",
+              "description": "Primary identifier"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

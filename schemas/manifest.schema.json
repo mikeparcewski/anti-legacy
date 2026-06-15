@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "anti-legacy Manifest",
+  "description": "Single source of truth for pipeline state and artifact registry. Every skill reads this first, every skill updates it after producing output.",
+  "type": "object",
+  "required": ["version", "project", "phase", "artifacts"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Manifest schema version."
+    },
+    "project": {
+      "type": "object",
+      "required": ["name", "source_apps", "target_stack"],
+      "properties": {
+        "name": { "type": "string", "description": "Human-readable project name." },
+        "source_apps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "path", "language"],
+            "properties": {
+              "name": { "type": "string" },
+              "path": { "type": "string", "description": "Relative path from project root." },
+              "language": { "type": "string", "enum": ["cobol", "csharp", "java", "vb6", "cpp", "python", "jcl", "other"] }
+            }
+          },
+          "description": "Legacy applications to analyze."
+        },
+        "target_stack": { "type": "string", "description": "Target language/framework (e.g. 'java', 'go', 'dotnet')." },
+        "target_path": { "type": "string", "description": "Relative path where target code will be generated." },
+        "deployment_target": { "type": "string", "description": "Infrastructure target (e.g. 'gcp-cloud-run', 'kubernetes', 'on-prem')." }
+      }
+    },
+    "phase": {
+      "type": "object",
+      "required": ["current", "completed"],
+      "properties": {
+        "current": {
+          "type": "string",
+          "enum": [
+            "uninitialized",
+            "survey",
+            "semantic-join",
+            "analyze",
+            "graph-translate",
+            "blueprint",
+            "test-strategy",
+            "review-packet",
+            "gate-design-review",
+            "planning",
+            "gate-plan-review",
+            "build",
+            "target-review",
+            "semantic-validation",
+            "gate-build-integrity",
+            "uat",
+            "gate-uat-signoff",
+            "complete"
+          ],
+          "description": "The current pipeline phase. The agent reads this to know where it is."
+        },
+        "completed": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Ordered list of phases that have been completed."
+        },
+        "blocked_reason": {
+          "type": "string",
+          "description": "If the pipeline is blocked at a gate, why."
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "Registry of every artifact the pipeline has produced. Keys are artifact IDs, values describe what/where/when.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["path", "format", "produced_by", "status"],
+        "properties": {
+          "path": { "type": "string", "description": "Relative path from .anti-legacy/ directory." },
+          "format": { "type": "string", "enum": ["json", "jsonl", "markdown", "text"], "description": "File format." },
+          "schema": { "type": "string", "description": "Reference to JSON schema file in schemas/ if applicable." },
+          "produced_by": { "type": "string", "description": "The skill or script that created this artifact." },
+          "status": { "type": "string", "enum": ["pending", "draft", "final", "approved", "failed"], "description": "Artifact lifecycle status." },
+          "produced_at": { "type": "string", "format": "date-time", "description": "ISO timestamp when this artifact was last written." },
+          "depends_on": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Artifact IDs this artifact was derived from."
+          },
+          "checksum": { "type": "string", "description": "SHA-256 of the file content at time of registration. Used to detect manual edits." }
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "description": "Status of each rigid gate.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "type": "string", "enum": ["pending", "passed", "failed", "waived"] },
+          "evaluator": { "type": "string" },
+          "evaluated_at": { "type": "string", "format": "date-time" },
+          "rationale": { "type": "string" },
+          "evidence_artifacts": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Artifact IDs that back this gate decision."
+          }
+        }
+      }
+    },
+    "learnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "path", "tags"],
+        "properties": {
+          "id": { "type": "string" },
+          "path": { "type": "string", "description": "Relative path to the learning note markdown file." },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Searchable tags (e.g. 'cobol', 'comp-3', 'bigdecimal')." },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "description": "Index of episodic learning notes. Faster than scanning the filesystem."
+    }
+  }
+}

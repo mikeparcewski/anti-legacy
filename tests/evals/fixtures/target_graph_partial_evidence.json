@@ -1,0 +1,54 @@
+{
+  "_comment": "SYNTHETIC target graph for T4 Case A (PARTIAL/FAIL). Mirrors the REAL target_graph.json shape (domains -> {package, components, entities}; components keyed by class NAME). The XService component carries an `implemented_rules` array (the per-rule evidence the FIXED compare_graphs reads) covering RULE-001, RULE-002 and VAL-001 with STRONG evidence -- but DELIBERATELY OMITS ERR-001. An uncovered error_path can never PASS (per compare_spec step 4), so REQ_X must score PARTIAL/FAIL with 'ERR-001' in uncovered_rule_ids even though the class exists and 3/4 rules are covered.",
+  "_design": {
+    "COVERAGE": "Covers RULE-001, RULE-002, VAL-001 (3 of REQ_X's 4 rule ids). ERR-001 (the error_path) is missing -> blocking uncovered error_path -> never PASS.",
+    "EVIDENCE_STRENGTH": "All three covered ids are 'strong' (test_ledger tier) so the ONLY reason this is not PASS is the missing error_path, isolating the error_path-blocks-PASS behavior the T4 eval asserts.",
+    "ITEM_SHAPE": "implemented_rules items follow the target_graph_spec: {rule_id, source, evidence_strength, file_path, line_range}; rule_id matches ^(RULE|VAL|ERR)-[0-9]{3}$."
+  },
+  "generated_at": "synthetic",
+  "target_path": "./target/demoapp",
+  "domains": {
+    "customer": {
+      "package": "com.demoapp.customer",
+      "components": {
+        "XService": {
+          "type": "service",
+          "file_path": "target/demoapp/src/main/java/com/demoapp/customer/XService.java",
+          "implemented_rules": [
+            {
+              "rule_id": "RULE-001",
+              "source": "test_ledger",
+              "evidence_strength": "strong",
+              "file_path": "target/demoapp/src/test/java/com/demoapp/customer/XServiceTest.java",
+              "line_range": "20-31"
+            },
+            {
+              "rule_id": "RULE-002",
+              "source": "test_ledger",
+              "evidence_strength": "strong",
+              "file_path": "target/demoapp/src/test/java/com/demoapp/customer/XServiceTest.java",
+              "line_range": "33-44"
+            },
+            {
+              "rule_id": "VAL-001",
+              "source": "test_ledger",
+              "evidence_strength": "strong",
+              "file_path": "target/demoapp/src/test/java/com/demoapp/customer/XServiceTest.java",
+              "line_range": "46-58"
+            }
+          ]
+        }
+      },
+      "entities": {
+        "Customer": {
+          "table_name": "customer",
+          "columns": [
+            { "name": "id", "type": "String" },
+            { "name": "account_status", "type": "String" }
+          ],
+          "file_path": "target/demoapp/src/main/java/com/demoapp/customer/Customer.java"
+        }
+      }
+    }
+  }
+}

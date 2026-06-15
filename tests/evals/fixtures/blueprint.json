@@ -1,0 +1,33 @@
+{
+  "_comment": "SYNTHETIC blueprint for the theory-eval harness. Matches the real blueprint.json shape that compare_graphs.py reads: domains -> components -> { class_name, type, api, dependencies } keyed by req_id, plus domains -> entities. The ONLY join compare_graphs needs is bp.domains[d].components[REQ_X].class_name -> 'XService'.",
+  "_design": {
+    "REQ_X_TO_XSERVICE": "Maps REQ_X -> class_name 'XService'. The target-graph fixture deliberately DOES contain an XService component, so the legacy class-existence check (compare_graphs line 66) PASSes -- which is exactly the hollow result T4 exposes when the class carries no implemented_rules.",
+    "build_order": "Single-element build order; present so a dependency-chain walk has a well-formed list to read."
+  },
+  "project": "demoapp",
+  "target_stack": "java",
+  "target_path": "./target/demoapp",
+  "build_order": ["REQ_X"],
+  "domains": {
+    "Domain_customer": {
+      "package": "com.demoapp.customer",
+      "components": {
+        "REQ_X": {
+          "type": "service",
+          "class_name": "XService",
+          "dependencies": [],
+          "api": { "method": "POST", "path": "/api/customer/x" }
+        }
+      },
+      "entities": {
+        "Customer": {
+          "table_name": "customer",
+          "columns": [
+            { "name": "id", "type": "VARCHAR(255)", "pk": true },
+            { "name": "account_status", "type": "VARCHAR(1)" }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-06-13T19:18:10.876142+00:00",
+  "total_requirements": 1,
+  "total_gaps": 0,
+  "gaps_by_severity": {},
+  "dependency_chains": [
+    {
+      "chain_id": "CHAIN-001",
+      "requirements": [
+        "REQ_BILLING"
+      ],
+      "domains": [
+        "Domain_config"
+      ]
+    }
+  ],
+  "gaps": []
+}

@@ -1,0 +1,62 @@
+{
+  "_comment": "SYNTHETIC enriched requirements graph for the theory-eval harness. Conforms to the BASE schemas/requirements-graph.schema.json (domains -> requirements -> {title, description, legacy_components, data_access, dependencies}) and additionally carries the rich fields (business_rules / validations / error_paths) in the NEW OBJECT form {id, statement, ...}. This is the form the enriched profile (requirements-graph.enriched.schema.json) validates and that the compare_graphs rewrite reads by item['id'] without prose regex.",
+  "_design": {
+    "OBJECT_FORM": "Rule items are objects, not 'RULE-001: text' strings. IDs follow RULE-/VAL-/ERR- + 3-digit zero-padded, UNIQUE WITHIN A REQUIREMENT (they restart per req). VAL.error_ref points at an ERR id in the SAME requirement (intra-req join the T4 done-check uses to verify a validation maps to a handled error path).",
+    "REQ_X": "One req that the blueprint maps to a class (XService). Carries 2 business_rules + 1 validation + 1 error_path = 4 rule ids total. The T4 eval pairs this with target graphs of varying coverage to prove 'done' = rule coverage (and that an uncovered error_path can never PASS), not class-name existence.",
+    "data_access_colocation": "data_access lists CUSTOMER (the entity present in this requirement's OWN domain), so the co-location invariant (data_access subset of own-domain entities) already holds in this hand-authored fixture and is not what trips the evals -- the normalizer-generated output is."
+  },
+  "metadata": {
+    "migration_mode": "functional"
+  },
+  "domains": {
+    "Domain_customer": {
+      "requirements": {
+        "REQ_X": {
+          "title": "Manage customer account lifecycle",
+          "description": "Create, update, and validate customer accounts against the CUSTOMER master.",
+          "legacy_components": ["demoapp:PROG_A"],
+          "data_access": ["CUSTOMER"],
+          "dependencies": [],
+          "status": "active",
+          "merged_programs": ["demoapp:PROG_A", "demoapp:PROG_B"],
+          "business_rules": [
+            {
+              "id": "RULE-001",
+              "statement": "A customer account must be created with a unique account identifier.",
+              "source_ref": "demoapp:PROG_A"
+            },
+            {
+              "id": "RULE-002",
+              "statement": "Account balance updates must preserve the running ledger total.",
+              "source_ref": "demoapp:PROG_A"
+            }
+          ],
+          "validations": [
+            {
+              "id": "VAL-001",
+              "statement": "The account status code must be one of 'A' (Active), 'C' (Closed), or 'S' (Suspended).",
+              "field": "account_status",
+              "error_ref": "ERR-001"
+            }
+          ],
+          "error_paths": [
+            {
+              "id": "ERR-001",
+              "statement": "Reject the update and return code 12 when the account status code is invalid.",
+              "code": "12"
+            }
+          ]
+        }
+      },
+      "entities": {
+        "CUSTOMER": {
+          "description": "Customer master record entity (co-located with REQ_X in its own domain).",
+          "fields": [
+            { "name": "id", "type": "string", "description": "Primary identifier" },
+            { "name": "account_status", "type": "string", "description": "Lifecycle status code: A | C | S" }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "anti-legacy Evidence Envelope",
+  "description": "Structured evidence for gate decisions. Produced by verifiers and reviewers.",
+  "type": "object",
+  "required": ["scope", "phase", "claim", "status", "evidence"],
+  "properties": {
+    "scope": { "type": "string", "description": "What area this evidence covers (e.g. 'build', 'uat', 'design')." },
+    "phase": { "type": "string", "description": "Pipeline phase that produced this evidence." },
+    "claim": { "type": "string", "description": "The specific claim being evidenced (e.g. 'target-compiles', 'requirements-met')." },
+    "status": { "type": "string", "enum": ["PASS", "FAIL", "PARTIAL", "WAIVED"] },
+    "evidence": {
+      "type": "object",
+      "description": "Backing data for the claim. Structure varies by scope.",
+      "properties": {
+        "command": { "type": "string" },
+        "exit_code": { "type": "integer" },
+        "stdout_snippet": { "type": "string" },
+        "stderr_snippet": { "type": "string" },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "check": { "type": "string" },
+              "result": { "type": "string", "enum": ["pass", "fail", "skip"] },
+              "detail": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "produced_at": { "type": "string", "format": "date-time" },
+    "produced_by": { "type": "string", "description": "Skill or script that produced this evidence." }
+  }
+}

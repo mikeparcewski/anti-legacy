@@ -1,0 +1,61 @@
+{
+  "_comment": "SYNTHETIC target graph for T4 Case B (PASS). Same real target_graph.json shape (domains -> {package, components, entities}; components keyed by class NAME). The XService component's `implemented_rules` array covers ALL FOUR of REQ_X's rule ids -- RULE-001, RULE-002, VAL-001, ERR-001 -- each with STRONG evidence. This is the only configuration that may PASS under the fixed compare_graphs: class exists, coverage == 1.0, every error_path covered, and evidence strength acceptable for PASS.",
+  "_design": {
+    "COVERAGE": "Covers RULE-001, RULE-002, VAL-001, ERR-001 = 4 of 4 rule ids -> coverage 1.0 with the error_path satisfied -> PASS.",
+    "EVIDENCE_STRENGTH": "All ids 'strong' so PASS holds under default AND --strict evidence requirements.",
+    "DELTA_FROM_PARTIAL": "Identical to target_graph_partial_evidence.json except it ADDS the ERR-001 evidence entry -- isolating the error_path coverage as the single bit that flips PARTIAL -> PASS."
+  },
+  "generated_at": "synthetic",
+  "target_path": "./target/demoapp",
+  "domains": {
+    "customer": {
+      "package": "com.demoapp.customer",
+      "components": {
+        "XService": {
+          "type": "service",
+          "file_path": "target/demoapp/src/main/java/com/demoapp/customer/XService.java",
+          "implemented_rules": [
+            {
+              "rule_id": "RULE-001",
+              "source": "test_ledger",
+              "evidence_strength": "strong",
+              "file_path": "target/demoapp/src/test/java/com/demoapp/customer/XServiceTest.java",
+              "line_range": "20-31"
+            },
+            {
+              "rule_id": "RULE-002",
+              "source": "test_ledger",
+              "evidence_strength": "strong",
+              "file_path": "target/demoapp/src/test/java/com/demoapp/customer/XServiceTest.java",
+              "line_range": "33-44"
+            },
+            {
+              "rule_id": "VAL-001",
+              "source": "test_ledger",
+              "evidence_strength": "strong",
+              "file_path": "target/demoapp/src/test/java/com/demoapp/customer/XServiceTest.java",
+              "line_range": "46-58"
+            },
+            {
+              "rule_id": "ERR-001",
+              "source": "test_ledger",
+              "evidence_strength": "strong",
+              "file_path": "target/demoapp/src/test/java/com/demoapp/customer/XServiceTest.java",
+              "line_range": "60-72"
+            }
+          ]
+        }
+      },
+      "entities": {
+        "Customer": {
+          "table_name": "customer",
+          "columns": [
+            { "name": "id", "type": "String" },
+            { "name": "account_status", "type": "String" }
+          ],
+          "file_path": "target/demoapp/src/main/java/com/demoapp/customer/Customer.java"
+        }
+      }
+    }
+  }
+}
