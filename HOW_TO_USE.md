@@ -64,6 +64,24 @@ You can also write `config.json` directly:
 
 Commit the `.anti-legacy/` directory. It's the shared pipeline state for the team.
 
+### Capability partition mode (optional)
+
+Extraction groups behavior-bearing nodes into capabilities before naming them. `config.coverage.capability_partition` selects how:
+
+```json
+{
+  "coverage": { "capability_partition": "auto" }
+}
+```
+
+- `auto` (default) — language-driven: mainframe estates use **call-affinity** (who calls whom), modern source uses **source-package** structure. Mainframe behaviour is unchanged from before — leave it on `auto` unless you have a reason not to.
+- `calls` — force call-affinity grouping regardless of language.
+- `package` — force source-package grouping.
+- `hierarchical` — engine Louvain community detection that splits dense mega-communities. Opt-in; use it when `auto` produces a few giant capabilities you want broken up.
+- `semantic` — engine embedding clustering; groups by meaning rather than structure. Opt-in; needs the index built with `--embeddings` (see survey). Use it for cross-app consolidation where structurally distant code is the same capability.
+
+`hierarchical` and `semantic` require **wicked-estate >= 0.4.0** — they are feature-detected and fall back gracefully (no-op, with a notice) on older engines, so the base pipeline still runs on 0.1.x. EXPERIMENTAL: the opt-in modes are newer than the `auto` path.
+
 ---
 
 ## Running the pipeline
@@ -99,6 +117,8 @@ This is the most token-intensive phase. The agent **crawls the wicked-estate cod
 ```
 "anti-legacy:extraction limit=50"     # cap the session; re-run to continue
 ```
+
+On wicked-estate >= 0.4.0 the crawl uses the bulk `source_bundle` helper: it prefetches every node's source body for a file in one budget-bounded call (default full bodies; `max_total_chars` caps the bundle, and a truncated node still keeps its `byte_range`/`blob_sha` so no node is ever dropped) instead of one source call per node. It falls back to per-node source on older engines.
 
 Output: `.anti-legacy/annotations.jsonl` (the rule overlay) + `.anti-legacy/coverage-report.json` + `.md`.
 
@@ -365,7 +385,7 @@ The requirements graph is domain-scoped. You can run the swarm for a single doma
 ## Troubleshooting
 
 **Survey shows zero nodes for an app**  
-The source path may be wrong, or the files are a language wicked-estate doesn't index. Check the `path` in config.json, and confirm the engine resolves — survey uses `config.json` key `wicked_estate_path`, then `WICKED_ESTATE_PATH`, then PATH, then the wicked-estate release fallback; if none resolve it errors with instructions to set `wicked_estate_path` (it never silently degrades). Modern languages are covered by this same pass — there is no separate modern survey track (`anti-legacy:survey-modern` is retired, a do-nothing redirect stub).
+The source path may be wrong, or the files are a language wicked-estate doesn't index. Check the `path` in config.json, and confirm the engine resolves — survey uses `config.json` key `wicked_estate_path`, then `WICKED_ESTATE_PATH`, then `wicked-estate` on PATH; if none resolve it errors with instructions to set `wicked_estate_path` (it never silently degrades). Modern languages are covered by this same pass — there is no separate modern survey track (`anti-legacy:survey-modern` is retired, a do-nothing redirect stub).
 
 **Extraction RISK-flags more nodes than expected**  
 A node is RISK-flagged when the crawl hits the ring/context budget (`crawl.max_rings`, `crawl.context_budget_chars` in config.json) or the rule is genuinely ambiguous. If a node looks thin, it may be a coordinator whose real logic is in called subprograms — extraction follows those edges via ring expansion, so widening `max_rings` can resolve it. Otherwise the flag is correct: it goes on the Gate 1 research queue rather than being guessed at. Inspect `.anti-legacy/annotations.jsonl` for the `risk_reason` and `ring_depth`.

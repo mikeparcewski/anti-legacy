@@ -20,9 +20,11 @@
 
 <a class="skip-link" href="#main">Skip to content</a>
 
-<!-- Experimental banner: early-stage project, surfaced site-wide. -->
-<div role="note" style="background:#7a2e00;color:#ffd9b0;text-align:center;padding:8px 16px;font-size:14px;line-height:1.4;border-bottom:1px solid #a84300;">
-  ⚠️ <strong>Experimental</strong> — early-stage project under active development. Interfaces, schemas, and outputs may change. Strongest on mainframe / loosely-coupled estates; rougher on dense modern codebases. Not production-ready.
+<!-- ======================================================================
+     EXPERIMENTAL BANNER — do not remove
+     =================================================================== -->
+<div role="status" style="background:rgba(229,115,75,0.08); border-bottom:1px solid var(--risk-dim); color:var(--risk); font-family:var(--font-mono); font-size:11px; letter-spacing:0.04em; text-align:center; padding:8px var(--s-6);">
+  ⚠️ Experimental — anti-legacy is a research pipeline, not production-ready. Modern-language naming quality depends on glossary curation.
 </div>
 
 <!-- ======================================================================
@@ -43,6 +45,7 @@
     <nav class="nav" aria-label="Primary">
       <a href="#how-it-works" class="nav-link-extra">How it works</a>
       <a href="#gates" class="nav-link-extra">Gates</a>
+      <a href="#examples" class="nav-link-extra">Examples</a>
       <a href="https://github.com/mikeparcewski/anti-legacy" class="is-cta" style="padding: var(--s-2);" aria-label="View on GitHub">
         <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
       </a>
@@ -364,7 +367,10 @@
               </p>
               <p style="margin-top: var(--s-4); color: var(--fog-500);">
                 Supports COBOL / JCL / CICS / IMS / DB2 mainframe estates and modern languages —
-                Java, C#, Python, TypeScript, Go, and more — in a single indexing pass.
+                Java, C#, TypeScript, Python, Go, Rust, C / C++ — in a single indexing pass.
+                Capability extraction now mines domain entities from classes, interfaces, structs,
+                traits, and enums, with a camelCase / PascalCase / snake_case tokenizer so dense
+                modern code yields real domain types — not just the mainframe estate.
               </p>
 
               <ul class="legend" style="margin-top: var(--s-8);" aria-label="Example node kinds">
@@ -659,15 +665,30 @@
               <p class="lead" style="margin-top: var(--s-6);">
                 The annotated rules are rationalized into a <strong style="color:var(--cyan-bright)">new
                 target-state domain graph</strong> — organized by what the business needs, not by the
-                shape of the old code. When migrating from multiple source repos, rules are merged
-                and conflicts surfaced explicitly. The domain graph is a <em>re-thought</em> artifact —
-                but it <strong>must cover every requirement edge</strong> from the code graph.
-                Zero silent drops.
+                shape of the old code. When consolidating multiple source apps, rules are merged,
+                cross-app capabilities coalesce, and conflicts surface explicitly. The domain graph is
+                a <em>re-thought</em> artifact — but it <strong>must cover every requirement edge</strong>
+                from the code graph. Zero silent drops.
               </p>
               <span class="badge" style="margin-top: var(--s-8);">
                 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 8.5 7 11.5 12.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 every original requirement covered · 0 dropped
               </span>
+
+              <p class="mono-micro" style="margin-top: var(--s-8); margin-bottom: var(--s-3);">Capability partition · how nodes group into requirements</p>
+              <p style="color: var(--fog-500); margin-top:0;">
+                The partition mode is configurable. <strong style="color:var(--cyan-bright)">auto</strong>
+                lets the language drive it; <strong>calls</strong> and <strong>package</strong> group by
+                structure; <strong>hierarchical</strong> and <strong>semantic</strong> are opt-in engine
+                clustering with graceful fallback when the engine declines.
+              </p>
+              <div style="display:flex; gap: var(--s-2); flex-wrap:wrap; margin-top: var(--s-4);">
+                <span class="pill pill--cyan"><span class="pill__dot"></span>auto</span>
+                <span class="pill pill--cyan"><span class="pill__dot"></span>calls</span>
+                <span class="pill pill--cyan"><span class="pill__dot"></span>package</span>
+                <span class="pill pill--cyan"><span class="pill__dot"></span>hierarchical</span>
+                <span class="pill pill--cyan"><span class="pill__dot"></span>semantic</span>
+              </div>
             </div>
 
             <div class="col-6 start-7" data-reveal>
@@ -892,6 +913,52 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ====================================================================
+       WORKED EXAMPLES — public demos
+       ================================================================= -->
+  <section class="section section--ink" id="examples" aria-labelledby="ex-h">
+    <div class="container">
+      <div class="grid" style="row-gap: var(--s-12);">
+        <div class="col-5" data-reveal>
+          <p class="eyebrow eyebrow--cyan">Worked examples · public repos only</p>
+          <h2 class="h2" id="ex-h">Two estates.<br>Mainframe and<br>modern.</h2>
+          <p class="lead" style="margin-top: var(--s-6);">
+            The pipeline runs on Apache-2.0 open-source codebases — one mainframe, one modern —
+            so the whole chain is reproducible without any private source.
+          </p>
+          <p style="margin-top: var(--s-4); color: var(--fog-500);">
+            The base pipeline runs on older engine builds. The modern-language capability
+            extraction, bulk source loading, and native <code style="font-family:var(--font-mono); font-size:12px; color:var(--fog-300)">domain_*</code>
+            projection require <strong style="color:var(--cyan-bright)">wicked-estate&nbsp;≥&nbsp;0.4.0</strong>.
+          </p>
+        </div>
+
+        <div class="col-6 start-7" data-reveal>
+          <div style="display:grid; gap: var(--s-4);">
+            <div class="card card--code" style="padding: var(--s-6);">
+              <span class="pill pill--amber" style="margin-bottom: var(--s-3);"><span class="pill__dot"></span>Mainframe · COBOL</span>
+              <p style="margin:0; max-width:none;">
+                <strong>AWS CardDemo</strong> — the AWS mainframe-modernization sample card-processing
+                application. COBOL / JCL indexed into the code graph, annotated to total coverage,
+                re-thought into a capability-organized domain graph.
+              </p>
+            </div>
+            <div class="card card--domain" style="padding: var(--s-6);">
+              <span class="pill pill--cyan" style="margin-bottom: var(--s-3);"><span class="pill__dot"></span>Modern · consolidation</span>
+              <p style="margin:0; max-width:none;">
+                <strong>Apache Kafka + Apache Pulsar</strong> producer APIs, consolidated in one run —
+                <strong style="color:var(--cyan-bright)">213 real business rules</strong> mined from
+                two distinct modern codebases, with cross-app capabilities coalescing into shared
+                requirements.
+              </p>
             </div>
           </div>
         </div>

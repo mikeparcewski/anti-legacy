@@ -1901,6 +1901,24 @@ class TestPackagePrimaryPartition(unittest.TestCase):
         members = [m for v in dg._capability_partition(app, 500).values() for m in v]
         self.assertEqual(sorted(members), ["m1", "m2", "m3"])
 
+    def test_hierarchical_mode_falls_back_without_engine_db(self):
+        # The opt-in "hierarchical" engine mode degrades to the auto (package)
+        # behaviour when there is no engine DB to cluster — never crashes, never
+        # drops members. (Graceful fallback for older engines.)
+        app = _partition_app("java", self._files_two_packages(),
+                             strategy="hierarchical")  # no 'db' key
+        parts = dg._capability_partition(app, 500)
+        # Fell back to package partition (3 packages), members conserved.
+        self.assertEqual(len(parts), 3)
+        members = sorted(m for v in parts.values() for m in v)
+        self.assertEqual(members, sorted(self._files_two_packages()))
+
+    def test_semantic_mode_falls_back_without_engine_db(self):
+        app = _partition_app("java", self._files_two_packages(),
+                             strategy="semantic")  # no 'db' key
+        parts = dg._capability_partition(app, 500)
+        self.assertEqual(len(parts), 3)  # degraded to package partition
+
 
 # ===========================================================================
 # PHASE 1+2 INTEGRATION — cross-app capability coalescing. Two modern apps that

@@ -570,5 +570,134 @@ class TestDriftAgainstRealBinary(unittest.TestCase):
         self.assertEqual(rc, 2)
 
 
+# ===========================================================================
+# Bulk source bundle (source_bundle / _apply_source_budget / fetch_source_range).
+# Native-first with a file= fallback; built against the engine `source --json`
+# spec (selectors + --max-total-chars + --signatures-only + body-dropped/
+# metadata-kept escape hatch).
+# ===========================================================================
+def _bundle_db(path, rows):
+    """Minimal engine-shaped sqlite the helper's list_nodes can read.
+    rows: list of (sid, sym, name, kind, file)."""
+    import sqlite3
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(
+            "CREATE TABLE symbols (sid INTEGER PRIMARY KEY, sym TEXT UNIQUE NOT NULL);"
+            "CREATE TABLE nodes (symbol INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+            "kind TEXT NOT NULL, language TEXT NOT NULL, file TEXT NOT NULL DEFAULT '', "
+            "data TEXT NOT NULL, description TEXT, requirement TEXT, "
+            "requirement_validated INTEGER NOT NULL DEFAULT 0);"
+            "CREATE TABLE edges (source INTEGER, target INTEGER, kind TEXT, "
+            "confidence REAL, file TEXT DEFAULT '', data TEXT, "
+            "PRIMARY KEY(source,target,kind));")
+        for sid, sym, name, kind, file_ in rows:
+            conn.execute("INSERT INTO symbols(sid,sym) VALUES(?,?)", (sid, sym))
+            conn.execute("INSERT INTO nodes(symbol,name,kind,language,file,data) "
+                         "VALUES(?,?,?,?,?,?)", (sid, name, json.dumps(kind), "java", file_, "{}"))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@unittest.skipIf(we is None, "wicked_estate not importable")
+class TestSourceBundleBudget(unittest.TestCase):
+    def _nodes(self, n, body_len=100):
+        return [{"name": "m%d" % i, "source": "x" * body_len} for i in range(n)]
+
+    def test_never_drops_a_node_only_blanks_body(self):
+        nodes = self._nodes(5, 100)  # 500 chars total
+        b = we._apply_source_budget(nodes, max_total_chars=250, signatures_only=False)
+        self.assertEqual(b["summary"]["requested"], 5)
+        self.assertEqual(b["summary"]["returned"], 5)              # never dropped
+        self.assertLessEqual(b["summary"]["total_source_chars"], 250)
+        self.assertGreater(b["summary"]["truncated_count"], 0)
+        # later nodes lost their body but kept their record
+        self.assertTrue(any(x["source"] is None for x in b["nodes"]))
+
+    def test_signatures_only_blanks_all_bodies(self):
+        b = we._apply_source_budget(self._nodes(3), max_total_chars=None,
+                                    signatures_only=True)
+        self.assertTrue(all(x["source"] is None for x in b["nodes"]))
+        self.assertEqual(b["summary"]["total_source_chars"], 0)
+        self.assertEqual(b["summary"]["returned"], 3)
+
+    def test_unbounded_default_keeps_all_bodies(self):
+        b = we._apply_source_budget(self._nodes(4, 50), max_total_chars=None,
+                                    signatures_only=False)
+        self.assertEqual(b["summary"]["total_source_chars"], 200)
+        self.assertEqual(b["summary"]["truncated_count"], 0)
+
+    def test_deterministic_emit_order(self):
+        a = we._apply_source_budget(self._nodes(6), 250, False)
+        b = we._apply_source_budget(self._nodes(6), 250, False)
+        self.assertEqual([n["source"] for n in a["nodes"]],
+                         [n["source"] for n in b["nodes"]])
+
+
+@unittest.skipIf(we is None, "wicked_estate not importable")
+class TestFetchSourceRange(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="we-range-")
+        self.f = os.path.join(self.tmp, "x.txt")
+        with open(self.f, "wb") as fh:
+            fh.write(b"0123456789abcdef")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_exact_slice(self):
+        self.assertEqual(we.fetch_source_range(self.f, [4, 10]), "456789")
+
+    def test_bad_range_raises(self):
+        with self.assertRaises(we.WickedEstateError):
+            we.fetch_source_range(self.f, [4])
+
+
+@unittest.skipIf(we is None, "wicked_estate not importable")
+class TestSourceBundleFallback(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="we-bundle-")
+        self.db = os.path.join(self.tmp, "g.db")
+        _bundle_db(self.db, [
+            (1, "P/P#", "Producer", "class", "Producer.java"),
+            (2, "P/send().", "send", "method", "Producer.java"),
+            (3, "K/K#", "KafkaProducer", "class", "KafkaProducer.java"),
+        ])
+        # a real file on disk for file_source resolution
+        self.root = self.tmp
+        with open(os.path.join(self.root, "Producer.java"), "w") as fh:
+            fh.write("class Producer { void send() {} }\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_missing_db_raises(self):
+        with self.assertRaises(we.WickedEstateError):
+            we.source_bundle("/no/such.db", file="x.java")
+
+    def test_cluster_selector_without_native_returns_none(self):
+        # cluster/symbols are native-only; on a fixture db with no native bundle
+        # support, the helper returns None (caller keeps current behavior).
+        self.assertIsNone(we.source_bundle(self.db, cluster="0"))
+
+    def test_file_fallback_exact_match_with_symbol_ids(self):
+        b = we.source_bundle(self.db, file="Producer.java")
+        self.assertIsNotNone(b)
+        self.assertTrue(b["summary"]["degraded"])
+        # exact file match — KafkaProducer.java excluded
+        self.assertEqual({n["file"] for n in b["nodes"]}, {"Producer.java"})
+        self.assertEqual(len(b["nodes"]), 2)
+        self.assertTrue(all(n["symbol_id"] for n in b["nodes"]))  # precise keying
+
+    def test_file_source_resolves_with_source_root(self):
+        b = we.source_bundle(self.db, file="Producer.java", source_root=self.root)
+        self.assertIn("class Producer", b["file_source"])
+        # budget caps the whole-file text
+        c = we.source_bundle(self.db, file="Producer.java", source_root=self.root,
+                             max_total_chars=5)
+        self.assertEqual(len(c["file_source"]), 5)
+
+
 if __name__ == "__main__":
     unittest.main()

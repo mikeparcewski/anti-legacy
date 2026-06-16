@@ -618,6 +618,215 @@ def source_by_match(db: str, name: str, binary: str | None = None) -> list:
     return records
 
 
+# ---------------------------------------------------------------------------
+# Bulk source bundle — one call returns the bodies for a whole capability/file,
+# budget-bounded, matching the engine `source --json` spec (selectors +
+# --max-total-chars + --signatures-only + the body-dropped/metadata-kept escape
+# hatch). NATIVE-FIRST: uses the engine's bundle when present; FALLBACK assembles
+# the same shape from list_nodes + source_by_match for the `file=` selector so it
+# works on today's engine (slower, N calls) and transparently upgrades.
+# ---------------------------------------------------------------------------
+def _apply_source_budget(nodes: list, max_total_chars, signatures_only: bool) -> dict:
+    """Apply the bundle budget to an ordered node list in place-of-emit: cap the
+    total inlined `source`, NEVER drop a node — only blank its body (source=None,
+    source_truncated=True) once the budget is exhausted, keeping its metadata so
+    the caller fetches the remainder by byte_range/blob_sha. Deterministic: nodes
+    are emitted in the given order. Returns the bundle {nodes, summary}."""
+    total = 0
+    truncated = 0
+    requested = len(nodes)
+    for n in nodes:
+        body = n.get("source") or ""
+        if signatures_only:
+            n["source"] = None
+            n["source_truncated"] = bool(body)
+            continue
+        if max_total_chars is not None and total >= max_total_chars:
+            n["source"] = None
+            n["source_truncated"] = True
+            truncated += 1
+            continue
+        if max_total_chars is not None and total + len(body) > max_total_chars:
+            keep = max_total_chars - total
+            n["source"] = body[:keep]
+            n["source_truncated"] = True
+            truncated += 1
+            total += keep
+        else:
+            n.setdefault("source_truncated", False)
+            total += len(body)
+    return {
+        "nodes": nodes,
+        "summary": {
+            "requested": requested,
+            "returned": len(nodes),
+            "total_source_chars": total,
+            "truncated_count": truncated,
+            "budget": {
+                "max_total_chars": max_total_chars,
+                "signatures_only": signatures_only,
+            },
+        },
+    }
+
+
+def source_bundle(
+    db: str,
+    *,
+    file: str | None = None,
+    cluster=None,
+    symbols=None,
+    max_total_chars: int | None = None,
+    signatures_only: bool = False,
+    source_root: str | None = None,
+    binary: str | None = None,
+) -> dict | None:
+    """Bulk source for a capability/file in ONE logical call, budget-bounded.
+
+    Selectors (exactly one): `file=` (all symbols in a source file — the extraction
+    unit), `cluster=`/`symbols=` (native engine only for now). Budget: default
+    UNBOUNDED full bodies; pass `max_total_chars` to cap, or `signatures_only=True`
+    for metadata-only. On budget exhaustion a node keeps its metadata with
+    source=None + source_truncated=True (never dropped) — fetch the rest via
+    `fetch_source_range(file, byte_range)`.
+
+    NATIVE-FIRST: when the engine ships `source --json` with selectors it is used
+    verbatim (richer fields: byte_range, blob_sha). FALLBACK (today's engine, `file=`
+    only) assembles the same shape from list_nodes + source_by_match; byte_range /
+    blob_sha are None there. Returns None when no path can satisfy the selector
+    (caller keeps its current per-file Read behavior)."""
+    db_path = db or DEFAULT_DB
+    if not os.path.exists(db_path):
+        raise WickedEstateError(f"db not found for source bundle: {db_path}")
+
+    native = _source_bundle_native(
+        db_path, file=file, cluster=cluster, symbols=symbols,
+        max_total_chars=max_total_chars, signatures_only=signatures_only,
+        binary=binary)
+    if native is not None:
+        return native
+
+    # Fallback: only the file selector is reconstructable from existing primitives.
+    if not file:
+        return None
+    return _source_bundle_file_fallback(
+        db_path, file, max_total_chars, signatures_only, source_root, binary)
+
+
+def _source_bundle_native(db_path, *, file, cluster, symbols,
+                          max_total_chars, signatures_only, binary):
+    """Try the engine's native `source --json` bundle. Returns the parsed dict, or
+    None when the engine does not support it (older build → no JSON bundle)."""
+    args = ["source"]
+    if symbols:
+        args += ["--symbols", ",".join(symbols)]
+    elif cluster is not None:
+        args += ["--cluster", str(cluster)]
+    elif file:
+        args += ["--file", file]
+    else:
+        return None
+    args.append("--json")
+    if signatures_only:
+        args.append("--signatures-only")
+    elif max_total_chars is not None:
+        args += ["--max-total-chars", str(max_total_chars)]
+    try:
+        raw = _native_json(args + _db_args(db_path),
+                           timeout=DEFAULT_TIMEOUTS["source"], binary=binary)
+    except WickedEstateError:
+        return None
+    # The native bundle is a dict with a NON-EMPTY "nodes" list. An older engine
+    # ignores --json and returns text (→ WickedEstateError above); a wrong selector
+    # (e.g. a bare basename when --file wants the stored relative path) returns an
+    # EMPTY bundle. Treat empty as "native could not satisfy this selector" → return
+    # None so source_bundle degrades to the file fallback (which suffix-matches a
+    # basename) instead of handing back an empty result.
+    if isinstance(raw, dict) and isinstance(raw.get("nodes"), list) and raw["nodes"]:
+        return raw
+    return None
+
+
+def _source_bundle_file_fallback(db_path, file, max_total_chars, signatures_only,
+                                 source_root, binary):
+    """Assemble a DEGRADED bundle for one source file from the primitives that
+    exist on today's engine. The current engine cannot give precise per-node byte
+    spans, so rather than guess them (unreliable), the fallback supplies the parts
+    it CAN get exactly: the precise node list (symbol_id/name/kind/line — for rule
+    keying) with per-node `source=None`, PLUS the whole-file text under
+    `file_source` (read once, budget-capped). That is exactly today's extraction
+    pattern (agent reads the file, keys rules by symbol) — and it upgrades silently
+    to per-node bodies the moment the native `source --json` bundle ships."""
+    want = file.replace("\\", "/")
+
+    def _matches(path):
+        p = (path or "").replace("\\", "/")
+        return p == want or p.endswith("/" + want)
+
+    file_nodes = [n for n in list_nodes(db_path) if _matches(n.get("file"))]
+    if not file_nodes:
+        return None
+    abspath = file_nodes[0].get("file")
+    nodes = []
+    for n in sorted(file_nodes, key=lambda x: (x.get("line") or 0, x.get("name") or "")):
+        nodes.append({
+            "symbol_id": n.get("symbol_id"),
+            "name": n.get("name"),
+            "kind": n.get("kind"),
+            "file": n.get("file"),
+            "line_1based": n.get("line"),
+            "end_line_1based": None,
+            "byte_range": None,
+            "blob_sha": None,
+            "signature": n.get("signature"),
+            "source": None,            # native bundle supplies per-node bodies
+            "source_truncated": True,  # => use file_source / FetchContent
+        })
+    # Resolve the file on disk: the DB stores the index-relative path, so reading
+    # the bytes needs the index root. Try, in order: the stored path as-is (it may
+    # be absolute), then source_root + stored path. None of these → file_source
+    # stays None (the caller, which knows the root, reads the file as it does today).
+    file_source = None
+    if not signatures_only:
+        candidates = [abspath]
+        if source_root:
+            candidates.append(os.path.join(source_root, abspath))
+        for cand in candidates:
+            try:
+                with open(cand, "r", encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+                file_source = text if max_total_chars is None else text[:max_total_chars]
+                break
+            except OSError:
+                continue
+    return {
+        "nodes": nodes,
+        "file_source": file_source,   # whole-file bytes (fallback only)
+        "summary": {
+            "selector": {"file": file},
+            "requested": len(nodes),
+            "returned": len(nodes),
+            "total_source_chars": len(file_source or ""),
+            "truncated_count": len(nodes),
+            "degraded": True,          # no per-node byte_range/blob_sha yet
+            "budget": {"max_total_chars": max_total_chars,
+                       "signatures_only": signatures_only},
+        },
+    }
+
+
+def fetch_source_range(file: str, byte_range) -> str:
+    """Escape hatch for a budget-truncated node: read the exact
+    [start_byte, end_byte) slice of `file` locally (no engine round-trip, no DB
+    open). `byte_range` is [start, end] as the bundle reports it."""
+    if not byte_range or len(byte_range) != 2:
+        raise WickedEstateError("fetch_source_range: byte_range must be [start, end]")
+    start, end = int(byte_range[0]), int(byte_range[1])
+    with open(file, "rb") as fh:
+        fh.seek(start)
+        return fh.read(max(0, end - start)).decode("utf-8", errors="replace")
+
+
 def rank(db: str = DEFAULT_DB, binary: str | None = None) -> list:
     """Run `wicked-estate rank --db <db>`. Returns the ranked node list
     (most important first) for the crawl worklist order."""
@@ -1288,10 +1497,18 @@ def _read_edges(db: str):
 
 
 # ---- B: cluster --------------------------------------------------------------
-def _native_clusters_readonly(db_path: str, binary: str | None = None):
-    """Run native `clusters 1 --json` against a TEMP COPY of `db_path`, returning the
-    parsed list-of-lists, or None when native cannot read the DB (e.g. a hand-built
-    fixture store that is not the engine's serialization).
+def _native_clusters_readonly(db_path: str, binary: str | None = None,
+                              extra_args: list | None = None):
+    """Run native `clusters 1 [extra_args] --json` against a TEMP COPY of `db_path`,
+    returning the parsed list-of-lists, or None when native cannot read the DB (e.g.
+    a hand-built fixture store that is not the engine's serialization).
+
+    `extra_args` appends mode flags the newer engine understands — e.g.
+    `["--hierarchical"]` (finer Louvain that splits dense mega-communities) or
+    `["--weight", "semantic"]` (embedding clustering). Engines that predate a flag
+    treat it as an unknown POSITIONAL token and ignore it (the CLI's catch-all), so
+    the call degrades gracefully to the plain partition rather than erroring — the
+    mode is strictly additive.
 
     The native command opens the store read-WRITE; copying first keeps the caller's
     DB byte-identical (the read-side no-mutation contract `test_does_not_mutate_db`
@@ -1315,7 +1532,7 @@ def _native_clusters_readonly(db_path: str, binary: str | None = None):
             return None
         try:
             raw = _native_json(
-                ["clusters", "1", "--json", "--db", copy_db],
+                ["clusters", "1", *(extra_args or []), "--json", "--db", copy_db],
                 timeout=DEFAULT_TIMEOUTS["rank"],
                 binary=binary,
             )
@@ -1558,6 +1775,49 @@ def cluster(
         "node_community": {nid: label[nid] for nid in node_ids},
         "num_communities": len(communities),
     }
+
+
+def cluster_modes(
+    db: str,
+    *,
+    hierarchical: bool = False,
+    semantic: bool = False,
+    binary: str | None = None,
+) -> dict | None:
+    """Capability communities via a NEWER-ENGINE clustering mode, or None when the
+    engine can't provide it (no native `clusters`, can't read the DB, or the mode
+    flag yields nothing) — so the caller falls back to the default `cluster()`.
+
+    Modes (additive; an older engine that ignores the flag returns its plain
+    partition and the caller treats that as "mode unavailable" via the degeneracy
+    check it already applies):
+      * hierarchical — finer Louvain that recursively splits dense mega-communities
+        (dense modern monoliths) instead of collapsing them into one blob.
+      * semantic     — DBSCAN/KMeans over the node EMBEDDINGS (requires the DB to
+        have been indexed with `--embeddings`); groups by what code DOES, which can
+        coalesce the same capability across source apps with different vocabularies.
+
+    Returns the SAME shape as `cluster()` (with engine-omitted nodes re-added as
+    singletons so node_community is total), or None to signal graceful fallback."""
+    db_path = db or DEFAULT_DB
+    if not os.path.exists(db_path):
+        raise WickedEstateError(f"db not found for clustering: {db_path}")
+    if not _probe_native_subcommand("clusters", binary=binary):
+        return None
+    extra: list = []
+    if hierarchical:
+        extra.append("--hierarchical")
+    if semantic:
+        extra += ["--weight", "semantic"]
+    raw = _native_clusters_readonly(db_path, binary=binary, extra_args=extra)
+    if raw is None:
+        return None
+    try:
+        return _cluster_from_native(db, raw, "calls", 0.0)
+    except WickedEstateError:
+        # Native produced a payload but the node back-fill could not read the DB
+        # (a non-engine fixture store) — signal graceful fallback, never raise.
+        return None
 
 
 # ---- C: context --------------------------------------------------------------

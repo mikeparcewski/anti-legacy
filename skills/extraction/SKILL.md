@@ -69,6 +69,17 @@ All script invocations go through `python3 .anti-legacy/run.py <stem> ...` (with
 subprocess + `shutil.which` — no shell builtins. Source slices are read via the
 helper's `source` command, not `cat`/`sed`.
 
+**Bulk source prefetch (wicked-estate ≥ 0.4.0).** The crawl loop now fetches each
+file's full bodies ONCE via `wicked_estate.source_bundle(db, file=…)` instead of a
+per-node `source` call, and surfaces each node's COMPLETE own-body as
+`framed_context["own_source"]` — so the extractor reasons over the whole method,
+not just what fit in the ring budget. Feature-detected: on an older engine
+`source_bundle` returns None and `own_source` is None (the ring `slices` remain the
+body source — no behavior change). `source_bundle` also takes `cluster=`/`symbols=`
+selectors and a `max_total_chars` budget; on truncation a node keeps its metadata
+(`source: null` + `byte_range`/`blob_sha`) so you fetch the remainder with
+`fetch_source_range(file, byte_range)` — a node is never dropped, only its body.
+
 ## Config
 
 ```bash

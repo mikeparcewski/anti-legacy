@@ -298,47 +298,50 @@ def _derive_term_index_from_glossary(nodes_list, vocab_path):
 
 
 def build_term_index(db_path: str, vocab_path: str) -> dict:
-    """Read the `domain_*` tags `vocabulary project` bound onto db_path and return
-    {node_name -> {"entity": canonical, "action": canonical}} (ISS-02).
+    """Build the {node_name -> {"entity": canonical, "action": canonical}} term
+    index that names capabilities (ISS-02), MERGING two signals:
 
-    Genuinely READS the engine (the user's "domain resolution lives in the
-    engine"): each confirmed term value is looked up by the native
-    `nodes --annotated-with KEY=VALUE` filter — one bulk call per term, not per
-    node. Empty when no glossary / no projected tags, so naming falls back
-    cleanly. NOTE: the tags are a re-projectable cache; this consumes whatever is
-    CURRENTLY on the graph, so a stale (un-reprojected) graph simply yields fewer
-    term names — never a wrong one."""
-    terms = _confirmed_terms_by_type(vocab_path)
+      1. GLOSSARY-DIRECT (dense base): tokenize every node name and match against
+         the confirmed glossary. This binds many nodes (every name carrying a
+         confirmed term), which is what makes same-capability nodes across apps
+         share an entity and COALESCE.
+      2. ENGINE-PROJECTED `domain_*` tags (authoritative overlay): the
+         `vocabulary project` cache, read via `nodes --annotated-with`. The engine
+         binds CONSERVATIVELY (only unambiguous nodes), so on its own it is sparse
+         and under-coalesces; used as an OVERLAY it corrects/authorizes the dense
+         base where the human-curated projection disagrees.
+
+    Engine tags win on conflict (the curated cache is authoritative); the dense
+    base fills every node the conservative projection skipped. Empty when no
+    glossary / unreadable DB, so naming falls back cleanly to statement nouns."""
+    # 1. Dense base from the glossary (engine-independent).
     index: dict = {}
-    for term_type, key in (("entity", "domain_entity"), ("action", "domain_action")):
-        for canonical in terms[term_type]:
-            # Boolean/accessor boilerplate is language mechanics, never a domain
-            # entity OR action — even if it slipped into the glossary as a confirmed
-            # term it must not name a capability (an `IsCapability`). Filter it on
-            # the engine-tag path too, matching the glossary-direct fallback.
-            if canonical in vocab._ACTION_BOILERPLATE:
-                continue
-            for node in we.nodes_annotated_with(db_path, key, canonical):
-                nm = node.get("name")
-                if nm:
-                    index.setdefault(nm, {})[term_type] = canonical
-    # Engine-independent fallback: when the engine exposes no projected `domain_*`
-    # tags (no native annotate store on this release), derive the same term index
-    # directly from the confirmed glossary + node names. The projected-tags path
-    # above wins when present (the engine cache is authoritative); this only fills
-    # in when it yielded nothing, so naming is never left on the statement-noun
-    # fallback merely because the engine can't hold annotations.
-    if not index:
-        # Only enumerate nodes when the glossary actually has confirmed terms to
-        # bind — avoids a list_nodes() call (and its db-open) on an empty/absent
-        # glossary, keeping the no-glossary path a clean empty return.
-        freqs = _confirmed_term_freqs(vocab_path)
-        if freqs["entity"] or freqs["action"]:
-            try:
-                index = _derive_term_index_from_glossary(
-                    we.list_nodes(db_path), vocab_path)
-            except we.WickedEstateError:
-                index = {}
+    freqs = _confirmed_term_freqs(vocab_path)
+    if freqs["entity"] or freqs["action"]:
+        try:
+            index = _derive_term_index_from_glossary(
+                we.list_nodes(db_path), vocab_path)
+        except we.WickedEstateError:
+            index = {}
+
+    # 2. Overlay the authoritative engine-projected tags (engine wins on conflict).
+    terms = _confirmed_terms_by_type(vocab_path)
+    try:
+        for term_type, key in (("entity", "domain_entity"), ("action", "domain_action")):
+            for canonical in terms[term_type]:
+                # Boolean/accessor boilerplate is language mechanics, never a domain
+                # entity OR action — even if a confirmed term, it must not name an
+                # `IsCapability`. Filtered on BOTH the base and this overlay.
+                if canonical in vocab._ACTION_BOILERPLATE:
+                    continue
+                for node in we.nodes_annotated_with(db_path, key, canonical):
+                    nm = node.get("name")
+                    if nm:
+                        index.setdefault(nm, {})[term_type] = canonical
+    except we.WickedEstateError:
+        # Engine can't read the DB (missing / non-engine fixture / no native
+        # annotate): the dense base from step 1 stands on its own.
+        pass
     return index
 
 
@@ -711,8 +714,10 @@ def _capability_partition(app, max_members):
 
     `config.coverage.capability_partition` overrides the auto choice:
       "auto" (default) → language-driven as above; "calls" → always communities;
-      "package" → always package-grouped. Mainframe estates are never silently
-    re-partitioned (auto keeps them on calls), so this is a pure modern-code win.
+      "package" → always package-grouped; "hierarchical"/"semantic" → use the
+    newer engine's finer Louvain / embedding clustering (graceful fallback to the
+    auto behavior when the engine does not provide it). Mainframe estates are never
+    silently re-partitioned (auto keeps them on calls), so this is a pure modern win.
     """
     communities = app["communities"]
     behavior_ids = app["behavior_ids"]
@@ -720,17 +725,39 @@ def _capability_partition(app, max_members):
     strategy = app.get("capability_partition", "auto")
     language = (app.get("language") or "").lower()
 
-    if strategy == "auto":
-        use_package = language and language not in _MAINFRAME_LANGUAGES
-    else:
-        use_package = strategy == "package"
-
     def _call_groups():
         # Call-affinity communities (mainframe / explicit "calls"). Drop the pure
         # structural communities that carry no behavior member.
         return {label: [m for m in members if m in behavior_ids]
                 for label, members in communities.items()
                 if any(m in behavior_ids for m in members)}
+
+    # Newer-engine clustering modes (opt-in). Each tries the engine; if it is
+    # unavailable (older engine / no DB / can't read it / no embeddings) it returns
+    # None and we fall through to the language-driven default — never a hard fail.
+    if strategy in ("hierarchical", "semantic"):
+        res = None
+        if app.get("db"):
+            try:
+                res = we.cluster_modes(
+                    app["db"],
+                    hierarchical=(strategy == "hierarchical"),
+                    semantic=(strategy == "semantic"))
+            except we.WickedEstateError:
+                res = None
+        if res and res.get("communities"):
+            groups = {label: [m for m in members if m in behavior_ids]
+                      for label, members in res["communities"].items()
+                      if any(m in behavior_ids for m in members)}
+            if groups:
+                return groups
+        # Engine mode unavailable/empty → degrade to the language-driven default.
+        strategy = "auto"
+
+    if strategy == "auto":
+        use_package = language and language not in _MAINFRAME_LANGUAGES
+    else:
+        use_package = strategy == "package"
 
     if use_package:
         # Flatten all behavior members across communities, de-duplicated and

@@ -382,6 +382,33 @@ def run(
     rule_emits = 0
     results = []
 
+    # Per-FILE source prefetch (one `source_bundle` call per file vs one `source`
+    # call per node): when the engine ships the bulk bundle, the loop fetches each
+    # file's full bodies ONCE and serves every node's own-body from the cache —
+    # so framed_context carries the node's COMPLETE body (`own_source`), not just
+    # what fit in the ring budget. Feature-detected: on an engine without the
+    # bundle, source_bundle returns None and own_source stays None (no behavior
+    # change, the ring `slices` remain the body source). Keyed by file.
+    _body_cache: dict = {}
+
+    def _own_source(n):
+        f = n.get("file")
+        sid = n.get("symbol_id")
+        if not f or not sid:
+            return None
+        if f not in _body_cache:
+            cache = {}
+            try:
+                bundle = we.source_bundle(db, file=f, binary=binary)
+            except we.WickedEstateError:
+                bundle = None
+            if bundle:
+                for bn in bundle.get("nodes", []):
+                    if bn.get("symbol_id") and bn.get("source"):
+                        cache[bn["symbol_id"]] = bn["source"]
+            _body_cache[f] = cache
+        return _body_cache[f].get(sid)
+
     for node in worklist:
         node = dict(node)
         label = node_community.get(node["symbol_id"])
@@ -420,6 +447,9 @@ def run(
             "cohesion": cohesion,
             "neighbors_in_cluster": in_cluster,
             "neighbors_classified": classified,
+            # The node's COMPLETE own-body from the per-file bundle prefetch (None
+            # when the engine has no bulk bundle — the ring `slices` still carry it).
+            "own_source": _own_source(node),
         }
 
         # 3c. INJECTED rule extraction (the LLM step in production). A node may

@@ -1,6 +1,6 @@
 # anti-legacy
 
-> ⚠️ **Experimental.** This is an early-stage, experimental project under active development. Interfaces, schemas, and outputs may change without notice. Capability extraction is strongest on mainframe / loosely-coupled estates and rougher on dense modern codebases (see [BACKLOG.md](BACKLOG.md)). Not production-ready — use it for exploration and evaluation.
+> ⚠️ **Experimental.** This is an early-stage, experimental project under active development. Interfaces, schemas, and outputs may change without notice. Capability extraction now works across modern languages (a camelCase/PascalCase/snake_case tokenizer plus domain-entity mining from class/interface/struct/trait/enum/record) as well as the mainframe estate, but naming **quality is gated on glossary curation** — an un-curated glossary that confirms every mined term can yield noisy names from code-mechanics tokens, so the human glossary-confirmation step (confirm only real domain terms) is what makes naming clean (see [BACKLOG.md](BACKLOG.md)). Not production-ready — use it for exploration and evaluation.
 
 A semi-autonomous legacy modernization pipeline plugin for **Antigravity**. Point it at one or more legacy/source codebases — COBOL, Java, SAP ABAP, RPG/400, C#, whatever — and it indexes them into a **wicked-estate** code graph (the structural spine), annotates each behavior-bearing node with its business rule to a provable coverage terminal, runs a structured team review, then orchestrates a swarm of subagents to rebuild them as **one** combined target spec / **one** app in your target stack (e.g. a COBOL carddemo + a Java credit-card service merged into a single Java service). Gates require human sign-off; everything between them runs autonomously.
 
@@ -90,9 +90,11 @@ Or run individual phases: `anti-legacy:setup`, `anti-legacy:survey`, etc.
 The survey phase runs **wicked-estate index** once over each source repo — one engine captures the mainframe estate and modern languages in the same pass (token-free, handles thousands of files), resolving cross-language edges automatically (JCL `EXEC PGM` → COBOL, `CALL` → COBOL). No language routing, no batch Python extractor.
 
 **Mainframe estate**: COBOL/JCL/CICS/IMS/DB2 — modules, paragraphs, fields, JCL steps/datasets, CICS programs/maps, IMS databases/segments, DB2 tables  
-**Modern**: Java, C#, Python, TypeScript, Go, Kotlin, Rust, and other languages the engine indexes
+**Modern**: Java, C#, Python, TypeScript, Go, Kotlin, Rust, and other languages the engine indexes. Domain entities are mined from `class`/`interface`/`struct`/`trait`/`enum`/`record` declarations, so Java, C#, TypeScript, Python, Go, Rust, C, and C++ all extract domain types (accessor boilerplate — `get`/`set`/`is`/`has`/`new` — is excluded from naming).
 
 There is no separate "modern" survey track: modern languages are indexed by the same `anti-legacy:survey` pass as the mainframe estate. (`anti-legacy:survey-modern` is retired — a do-nothing redirect stub kept only so stale references resolve.)
+
+**Capability partition** (`config.coverage.capability_partition`): `auto` (default — language-driven: mainframe → call-affinity, modern → source-package), `calls`, `package`, `hierarchical`, or `semantic`. The `hierarchical` (Louvain community splitting) and `semantic` (embedding clustering) modes are opt-in, feature-detected, and require **wicked-estate ≥ 0.4.0** — they fall back gracefully on older engines, and mainframe behaviour is unchanged on `auto`. The base pipeline runs on older engines; the new clustering and bulk-source capabilities need 0.4.0+.
 
 ---
 

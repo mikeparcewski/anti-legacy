@@ -17,5 +17,8 @@
       "language": "java",
       "repo": "https://github.com/apache/pulsar"
     }
-  ]
+  ],
+  "coverage": {
+    "capability_partition": "auto"
+  }
 }

@@ -8,21 +8,40 @@ Status legend: ✅ done · 🟡 partial/spiked · 🔵 designed · ⚪ idea
 
 ---
 
-## Capability naming + cross-app coalescing on modern code 🔵
+## Capability naming + cross-app coalescing on modern code ✅ *(shipped; needs wicked-estate ≥ 0.4.0)*
 
-On dense modern codebases (the Kafka+Pulsar demo), capability **naming** falls back to noun-frequency
-(`AlreadyAlwaysCapability`) and capabilities do **not coalesce** across source apps. Both have one root
-cause: the vocabulary glossary was not projected onto the graph, so `domain_name_for`'s priority-1
-term-aware path (`domain_entity`/`domain_action` → `{Action}{Entity}Capability`) has nothing to read and
-drops to priority-2 (statement nouns).
+Modern-language capability extraction now works (previously naming fell back to noun-frequency
+(`AlreadyAlwaysCapability`) and capabilities did **not coalesce** across source apps). The base pipeline
+runs on wicked-estate 0.1.x; the items below need the **0.4.0** ("data-availability") engine and
+feature-detect / fall back on older engines.
 
-- **Fix A (wiring, exists):** run `vocabulary mine → confirm → project_terms_to_graph` before
-  graph-translate so capabilities are named from canonical terms. Same-canonical capabilities across apps
-  then share a domain key and coalesce automatically (see `domain_name_for` docstring).
-- **Fix B (the new bit):** exact-canonical only coalesces when both systems use the *same word*
-  (Kafka "record" vs Pulsar "message" won't merge). Add a **semantic** synonym-resolution step — embed the
-  mined terms / rule statements via wicked-estate `semantic` + `--embeddings` and cluster cross-vocabulary
-  synonyms onto a shared canonical — so record≈message → one canonical → coalesce.
+- **Tokenizer ✅** — camelCase/PascalCase/snake_case split (`getProducerName` → GET, PRODUCER, NAME);
+  accessor boilerplate (get/set/is/has/new) excluded from naming. Mainframe hyphen/underscore names AND
+  digit-bearing tokens (DB2, STAT1) are byte-identical to before.
+- **Entity mining ✅** — domain ENTITIES mined from class/interface/struct/trait/enum/record, so
+  Java, C#, TypeScript, Kotlin, Swift, Python, Ruby AND Go/Rust/C/C++ extract domain types (validated by
+  indexing 7 languages).
+- **Fix A — term projection ✅** — `vocabulary mine → confirm → project_terms_to_graph` runs before
+  graph-translate so capabilities are named from canonical terms; same-canonical capabilities across apps
+  share a domain key and coalesce automatically (see `domain_name_for` docstring). Native `domain_*`
+  projection is live (the engine `annotate` store round-trips); naming **merges** a dense glossary-direct
+  base with the engine-projected tags, with an engine-independent fallback so naming works without the
+  native store.
+- **Fix B — semantic synonym resolution ✅ (opt-in)** — exact-canonical only coalesces when both systems
+  use the *same word* (Kafka "record" vs Pulsar "message" won't merge on exact). The `semantic` partition
+  mode embeds and clusters cross-vocabulary synonyms onto a shared canonical so record ≈ message coalesces;
+  it is opt-in and feature-detected.
+
+**Honest caveat — naming-quality curation guard (still open):** naming quality is gated on glossary
+**curation**. On an un-curated glossary that confirms every mined term, code-mechanics tokens can yield
+noisy names. The human glossary-confirmation step (confirm only real domain terms) is what makes naming
+clean — that confirmation is not yet enforced by a guard.
+
+**Still open — sharper semantic quality:** wire `fastembed` for higher-fidelity embeddings on the
+`semantic` mode (the engine's default clustering is coarser).
+
+**Still open — engine bug:** wicked-estate's `--package-bias` / `--resolution` partition flags are
+currently no-ops; the partition modes that depend on them route around it for now.
 
 ---
 
@@ -76,6 +95,15 @@ kept honest by a CI drift gate. **Two graphs**, not one:
   in develop-plugin, F12 `target_verifier`→`demo/`, F-pkt portable links.
 - **AGENTS.md < 12K** via skill references (B1).
 - **wicked-estate spike** — carddemo COBOL: 10,307 nodes / 1.8s, cross-domain `blast-radius` COBOL→JCL; Java clean.
+- **Capability partition modes** — `config.coverage.capability_partition`: `auto` (default; language-driven:
+  mainframe → call-affinity, modern → source-package) | `calls` | `package` | `hierarchical` | `semantic`.
+  `hierarchical` (engine Louvain, splits dense mega-communities) and `semantic` (engine embedding clustering)
+  are opt-in, feature-detected, and fall back gracefully on engines without them. Mainframe behaviour on
+  `auto` is unchanged. *(needs wicked-estate ≥ 0.4.0 for hierarchical/semantic)*
+- **Bulk source (`source_bundle`)** — one call returns a file's / cluster's / symbols' bodies,
+  budget-bounded (default full bodies; `max_total_chars` caps) with a never-drop-a-node escape hatch
+  (a truncated node keeps `byte_range`/`blob_sha`). The extraction loop now prefetches each file's bodies
+  once instead of one source call per node.
 - Suite green (232 passed).
 
 ---
@@ -102,6 +130,7 @@ kept honest by a CI drift gate. **Two graphs**, not one:
   rate ramps the threshold → autonomy (the flywheel).
 - **I5 — Re-think → new domain graph** — rationalize into the target-state domain graph by capability;
   **cross-source conflict detection** (two repos, divergent rules → risk); provenance to code-graph nodes.
+  *Cross-app capability coalescing ✅ shipped (see top section); conflict detection + the coverage invariant below still planned.*
   **Requirement-coverage invariant:** the domain graph must cover **every** requirement edge from the
   annotated code graph — a *second* coverage check beyond I2's node coverage. 0 dropped; each intentional
   drop is an explicit, audited decision. This is the **requirements-level round-trip** and a CI/gate check.
@@ -137,8 +166,10 @@ kept honest by a CI drift gate. **Two graphs**, not one:
 
 ## G — Acceptance criteria ("general-purpose")
 
-- **G1 — Apache Kafka + Apache Pulsar → one streaming service.** Validates gate enforcement,
-  evidence integrity, round-trip, sequencing. **NOT a generality proof.**
+- **G1 — Apache Kafka + Apache Pulsar → one streaming service ✅ (bundled demo).** Producer APIs from
+  both Apache repos consolidated into one target: 213 real, source-grounded business rules; cross-app
+  capabilities coalesce (e.g. a Producer capability spanning both apps) — 7 coalescing on `auto`, 9 on
+  `semantic`. Validates gate enforcement, evidence integrity, round-trip, sequencing. **NOT a generality proof.**
 - **G2 — a NON-CardDemo, ideally NON-COBOL migration** (e.g. Java→Go, C#→Java). The real generality test —
   exercises wicked-estate's modern path + the extraction loop end-to-end. **"General-purpose" ⇔ G2 passes.**
 

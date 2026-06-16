@@ -63,30 +63,37 @@ Java/modern packages are designed as cohesive capabilities. `_sub_partition_by_p
 - Done when: the demo yields O(packages) coherent capabilities, not 1 blob or 150 singletons.
 - Effort: **M**.
 
-## Phase 3 — Multi-edge clustering  ·  helper-side blend, or `[ESTATE]` native
+## Phase 3 — Finer / multi-edge clustering  ·  ✅ ADOPTED (engine `--hierarchical`)
 
-Cluster on a blend of `calls + implements + extends + imports + data`, not calls-only (the graph already
-carries all of these — Kafka had 986 implements / 763 extends / 93,620 imports).
+The engine now ships **hierarchical Louvain** (`clusters --hierarchical`) over its richer edge set
+(calls + imports + the new Java/Spring DI / pub-sub / route edges). anti-legacy consumes it as the opt-in
+`capability_partition: "hierarchical"` mode (`wicked_estate.cluster_modes(db, hierarchical=True)`), with
+graceful fallback to the language-driven default when the engine predates it.
 
-- anti-legacy side: build a weighted multi-edge graph from the engine's edge export and run community
-  detection on that; OR
-- `[ESTATE]` native `clusters --weight <blend>` so the engine does it directly.
-- Files: `scripts/wicked_estate.py` (blended-graph builder from export), `scripts/domain_graph.py`.
-- Done when: capabilities spanning classes via inheritance/interfaces cluster together.
-- Effort: **M** (helper-side) / **S** if estate exposes a blend weight.
+- Measured on the `kafka-clients` mega-blob: hierarchical → top community **62** (vs the package-partition's
+  1880, vs plain Louvain's 1025). Members conserved, no dups.
+- Files: `scripts/wicked_estate.py` (`cluster_modes`), `scripts/domain_graph.py` (`_capability_partition`).
+- Residual: the engine's `--package-bias` / `--resolution` flags parse but had **no measurable effect** in
+  the build tested — file an engine bug; `--hierarchical` is the one that works.
 
-## Phase 4 — Semantic synonym resolution for cross-vocabulary coalescing  ·  gated on `[ESTATE]` semantic
+## Phase 4 — Semantic clustering for cross-vocabulary coalescing  ·  ✅ ADOPTED (engine `--weight semantic`)
 
-Exact-canonical only coalesces identical words. Kafka "record" ≠ Pulsar "message" won't merge without a
-semantic bridge.
+The engine now ships **embedding clustering** (`clusters --weight semantic`, DBSCAN/KMeans over node
+embeddings from `index --embeddings`). anti-legacy consumes it as `capability_partition: "semantic"`
+(`cluster_modes(db, semantic=True)`), graceful-fallback as above. This groups code by what it DOES, which
+can coalesce the same capability across source apps with different vocabularies (Kafka "record" ≈ Pulsar
+"message") — the bridge exact-canonical naming can't make.
 
-- `[ESTATE]`: a `clusters --weight semantic` mode (or a term/statement embedding export) built on the
-  engine's existing `semantic` + `--embeddings`.
-- anti-legacy side: a synonym-resolution step that embeds mined terms / rule statements and maps
-  cross-system synonyms onto a **shared canonical** before `project`.
-- Files: `scripts/vocabulary.py` (synonym resolution), `scripts/domain_graph.py` (naming).
-- Done when: Kafka-producer and Pulsar-producer capabilities coalesce despite different vocabularies.
-- Effort: **M**, gated on the engine semantic export.
+- Also LIVE now: the native `annotate` store round-trips, so the projected-`domain_*` path in
+  `build_term_index` works (the glossary-direct derivation remains the engine-independent fallback).
+- Residual: the default embedder's semantic quality is modest (top search hits were imports); build the
+  engine with the `fastembed` feature for sharper embeddings. A vocabulary-side synonym-resolution step
+  (embed mined terms → shared canonical before `project`) is still open as a complementary path.
+- Files: `scripts/wicked_estate.py` (`cluster_modes`), `scripts/domain_graph.py`.
+
+> **Engine-version note:** these modes require a wicked-estate build with hierarchical/semantic clustering.
+> They are feature-detected and fall back cleanly on the released `0.1.7`, so adopting them is safe before
+> the engine release lands on crates.io.
 
 ---
 

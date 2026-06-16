@@ -325,6 +325,26 @@ class TestLoopAgainstRealEngine(unittest.TestCase):
         for want in ("open_account", "validate_account", "post_bill", "compute_interest"):
             self.assertIn(want, names, f"{want} should be in the worklist")
 
+    def test_framed_context_carries_own_source_from_bundle(self):
+        """The per-file source_bundle prefetch surfaces each node's COMPLETE body
+        as framed_context['own_source'] (key always present; populated for nodes
+        whose file the bundle returns)."""
+        seen = {"key_present": True, "any_populated": False}
+
+        def extractor(node, framed):
+            if "own_source" not in framed:
+                seen["key_present"] = False
+            if framed.get("own_source"):
+                seen["any_populated"] = True
+            return {"statement": "%s does its thing" % node["name"], "confidence": 0.90}
+
+        ext.run(self.db, config=_CONFIG, extract_rule=extractor,
+                overlay_path=os.path.join(self.tmpdir, "overlay-ownsrc.jsonl"),
+                binary=BINARY)
+        self.assertTrue(seen["key_present"], "own_source key must always be framed")
+        self.assertTrue(seen["any_populated"],
+                        "the bundle prefetch should populate at least one own_source")
+
     def test_split_node_writes_all_rules_atomically(self):
         """A node whose extractor returns 2 rules writes 2 overlay rows in ONE
         pass — the primary RULE + its ERR- twin — and BOTH classify in coverage.
