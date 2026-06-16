@@ -298,6 +298,11 @@ class TestGraphNormalizerCLI(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, os.path.join(self.scripts_dir, 'graph_normalizer.py'),
              '--input', input_path, '--output', output_path],
+            # Run in the tmpdir so the CLI's default --config (.anti-legacy/config.json,
+            # resolved relative to CWD) cannot pick up the host workspace's config.
+            # Without this, an ambient `migration_mode: functional` silently changes the
+            # default mode and contaminates the assertions below.
+            cwd=self.tmpdir,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         self.assertEqual(result.returncode, 0,
@@ -314,6 +319,7 @@ class TestGraphNormalizerCLI(unittest.TestCase):
             [sys.executable, os.path.join(self.scripts_dir, 'graph_normalizer.py'),
              '--input', '/nonexistent/path.json',
              '--output', os.path.join(self.tmpdir, 'out.json')],
+            cwd=self.tmpdir,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         self.assertNotEqual(result.returncode, 0,
@@ -599,6 +605,7 @@ class TestFunctionalCLI(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, os.path.join(self.scripts_dir, 'graph_normalizer.py'),
              '--input', self.input_path, '--output', output_path, '--mode', 'functional'],
+            cwd=self.tmpdir,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         self.assertEqual(result.returncode, 0,
@@ -622,6 +629,11 @@ class TestFunctionalCLI(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, os.path.join(self.scripts_dir, 'graph_normalizer.py'),
              '--input', self.input_path, '--output', output_path],
+            # Hermetic CWD: the no-`--mode` default must resolve from the script's own
+            # fallback ('structural'), NOT from whatever migration_mode the host
+            # workspace's .anti-legacy/config.json happens to carry. This is the
+            # permanent fix for the recurring functional-config footgun.
+            cwd=self.tmpdir,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         self.assertEqual(result.returncode, 0,
