@@ -1677,10 +1677,15 @@ class TestLargeCommunitySubPartition(DomainGraphTestBase):
         write_coverage_report(self.coverage_path, coverage=1.0)
 
     def _write_config_with_max(self, max_size):
+        # This class exercises the SIZE-based sub-partition (the oversized-community
+        # path), so it pins capability_partition="calls" — otherwise Phase 2 would
+        # package-partition the java fixture by default and these tests would be
+        # measuring the package strategy instead of the size split. The package
+        # strategy has its own tests (TestPackagePrimaryPartition).
         cfg = {
             "migration_mode": "functional",
             "source_apps": [{"name": self.APP, "language": "java"}],
-            "coverage": {"resolve_threshold": 0.75},
+            "coverage": {"resolve_threshold": 0.75, "capability_partition": "calls"},
             "domain_graph": {"max_community_size": max_size},
         }
         with open(self.config_path, "w", encoding="utf-8") as fh:
@@ -1728,6 +1733,227 @@ class TestLargeCommunitySubPartition(DomainGraphTestBase):
         for _rid, (_dname, req) in self.all_requirements(graph).items():
             for br in req["business_rules"]:
                 self.assertRegex(br["id"], r"^RULE-[0-9]{3,6}$")
+
+
+# ===========================================================================
+# PHASE 1 — glossary-DIRECT capability naming (engine-independent). Derives the
+# {node_name -> {entity, action}} term index from the confirmed glossary + node
+# names when the engine exposes no projected domain_* tags.
+# ===========================================================================
+def _vocab_file(path, entities=(), actions=()):
+    """Write a minimal confirmed-glossary file. entities/actions are
+    (canonical, freq) tuples."""
+    terms = []
+    for canon, freq in entities:
+        terms.append({"canonical": canon, "term_type": "entity",
+                      "status": "confirmed", "freq": freq})
+    for canon, freq in actions:
+        terms.append({"canonical": canon, "term_type": "action",
+                      "status": "confirmed", "freq": freq})
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"terms": terms, "meta": {}}, fh)
+    return path
+
+
+@unittest.skipIf(dg is None, "scripts/domain_graph.py not importable: %s" % IMPORT_ERROR)
+class TestGlossaryDirectNaming(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="dg-gloss-")
+        self.voc = os.path.join(self.tmp, "vocabulary.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_derive_maps_entity_and_action(self):
+        _vocab_file(self.voc, entities=[("PRODUCER", 9)], actions=[("SEND", 4)])
+        nodes = [{"symbol_id": "s1", "name": "KafkaProducer"},
+                 {"symbol_id": "s2", "name": "sendMessage"}]
+        idx = dg._derive_term_index_from_glossary(nodes, self.voc)
+        self.assertEqual(idx["KafkaProducer"]["entity"], "PRODUCER")
+        self.assertEqual(idx["sendMessage"]["action"], "SEND")
+
+    def test_highest_freq_entity_wins_on_compound_name(self):
+        # KafkaProducer -> KAFKA + PRODUCER; the higher-freq PRODUCER is the head.
+        _vocab_file(self.voc, entities=[("PRODUCER", 9), ("KAFKA", 2)])
+        idx = dg._derive_term_index_from_glossary(
+            [{"symbol_id": "s", "name": "KafkaProducer"}], self.voc)
+        self.assertEqual(idx["KafkaProducer"]["entity"], "PRODUCER")
+
+    def test_skips_boilerplate_action_token(self):
+        # getProducerName: GET is boilerplate -> no action; PRODUCER is the entity.
+        _vocab_file(self.voc, entities=[("PRODUCER", 9)], actions=[("GET", 5)])
+        idx = dg._derive_term_index_from_glossary(
+            [{"symbol_id": "s", "name": "getProducerName"}], self.voc)
+        self.assertEqual(idx["getProducerName"].get("entity"), "PRODUCER")
+        self.assertNotIn("action", idx["getProducerName"])
+
+    def test_empty_glossary_yields_empty_index(self):
+        _vocab_file(self.voc)  # no terms
+        self.assertEqual(
+            dg._derive_term_index_from_glossary(
+                [{"symbol_id": "s", "name": "Producer"}], self.voc), {})
+
+    def test_malformed_glossary_is_graceful(self):
+        # A corrupt vocabulary.json must not crash term-freq loading; it yields
+        # empty buckets so naming falls back cleanly.
+        with open(self.voc, "w", encoding="utf-8") as fh:
+            fh.write("{ this is not valid json ")
+        self.assertEqual(dg._confirmed_term_freqs(self.voc), {"entity": {}, "action": {}})
+        self.assertEqual(
+            dg._derive_term_index_from_glossary(
+                [{"symbol_id": "s", "name": "Producer"}], self.voc), {})
+
+    def test_build_term_index_glossary_fallback_no_engine_tags(self):
+        # build_term_index on a missing db with a real glossary must not crash and
+        # must return {} (no nodes to derive from) — the engine-absent path.
+        _vocab_file(self.voc, entities=[("PRODUCER", 9)])
+        self.assertEqual(dg.build_term_index("/no/such.db", self.voc), {})
+
+
+# ===========================================================================
+# PHASE 2 — package-as-primary capability partition (language-driven). Modern
+# code partitions by source package; mainframe stays on call-affinity.
+# ===========================================================================
+def _partition_app(language, files, *, strategy="auto", communities=None):
+    """A minimal app dict for _capability_partition. `files` = {sid: file_path};
+    all sids are behavior-bearing. Default communities = one mega-community."""
+    sids = list(files)
+    nodes = {sid: {"symbol_id": sid, "name": sid, "file": f}
+             for sid, f in files.items()}
+    comms = communities if communities is not None else {"c0": sids}
+    return {"app": "a", "nodes": nodes, "behavior_ids": set(sids),
+            "communities": comms, "language": language,
+            "capability_partition": strategy}
+
+
+@unittest.skipIf(dg is None, "scripts/domain_graph.py not importable: %s" % IMPORT_ERROR)
+class TestPackagePrimaryPartition(unittest.TestCase):
+    def _files_two_packages(self):
+        return {
+            "k1": "src/producer/KafkaProducer.java",
+            "k2": "src/producer/ProducerRecord.java",
+            "k3": "src/consumer/KafkaConsumer.java",
+            "k4": "src/consumer/ConsumerRecord.java",
+            "k5": "src/admin/AdminClient.java",
+        }
+
+    def test_modern_language_partitions_by_package(self):
+        app = _partition_app("java", self._files_two_packages())
+        parts = dg._capability_partition(app, 500)
+        # Three packages -> three capability groups (not one mega-community).
+        self.assertEqual(len(parts), 3)
+        labels = " ".join(parts.keys())
+        self.assertIn("producer", labels)
+        self.assertIn("consumer", labels)
+        self.assertIn("admin", labels)
+
+    def test_mainframe_language_stays_on_calls(self):
+        # cobol with a single call-community -> one capability (NOT package-split).
+        app = _partition_app("cobol", self._files_two_packages())
+        parts = dg._capability_partition(app, 500)
+        self.assertEqual(len(parts), 1)  # the single call community
+
+    def test_unknown_language_treated_as_modern(self):
+        app = _partition_app("rust", self._files_two_packages())  # not in mainframe set
+        self.assertEqual(len(dg._capability_partition(app, 500)), 3)
+
+    def test_explicit_calls_override_keeps_communities(self):
+        app = _partition_app("java", self._files_two_packages(),
+                             strategy="calls",
+                             communities={"c1": ["k1", "k2"], "c2": ["k3", "k4", "k5"]})
+        parts = dg._capability_partition(app, 500)
+        self.assertEqual(len(parts), 2)  # the two call communities, not 3 packages
+
+    def test_explicit_package_override_on_mainframe(self):
+        app = _partition_app("cobol", self._files_two_packages(), strategy="package")
+        # Explicit package override is honored even for mainframe.
+        self.assertEqual(len(dg._capability_partition(app, 500)), 3)
+
+    def test_flat_module_falls_back_to_calls(self):
+        # All files in ONE directory -> no package signal -> auto falls back to
+        # the call communities (so a flat module is not collapsed into 1 capability).
+        flat = {"k1": "src/A.java", "k2": "src/B.java", "k3": "src/C.java"}
+        app = _partition_app("java", flat,
+                             communities={"c1": ["k1", "k2"], "c2": ["k3"]})
+        parts = dg._capability_partition(app, 500)
+        self.assertEqual(len(parts), 2)  # fell back to the 2 call communities
+
+    def test_no_behavior_members_yields_empty(self):
+        app = _partition_app("java", self._files_two_packages())
+        app["behavior_ids"] = set()
+        self.assertEqual(dg._capability_partition(app, 500), {})
+
+    def test_non_string_file_does_not_crash(self):
+        # Defensive (adversarial finding): a degenerate engine node whose `file`
+        # is not a string must not crash the package split.
+        nodes = {"a": {"symbol_id": "a", "file": 12345},
+                 "b": {"symbol_id": "b", "file": None}}
+        groups = dg._sub_partition_by_package(["a", "b"], nodes)
+        self.assertEqual(sorted(m for v in groups.values() for m in v), ["a", "b"])
+
+    def test_overlapping_communities_do_not_duplicate(self):
+        # A member in two communities must land in exactly one capability (dedup).
+        app = _partition_app(
+            "java",
+            {"m1": "p/A.java", "m2": "p/B.java", "m3": "q/C.java"},
+            strategy="package",
+            communities={"c1": ["m1", "m2", "m3"], "c2": ["m1"]})
+        members = [m for v in dg._capability_partition(app, 500).values() for m in v]
+        self.assertEqual(sorted(members), ["m1", "m2", "m3"])
+
+
+# ===========================================================================
+# PHASE 1+2 INTEGRATION — cross-app capability coalescing. Two modern apps that
+# both expose a PRODUCER capability must coalesce into ONE domain (shared name).
+# ===========================================================================
+@unittest.skipIf(dg is None, "scripts/domain_graph.py not importable: %s" % IMPORT_ERROR)
+class TestCrossAppCoalescing(DomainGraphTestBase):
+    def _write_java_config(self, apps):
+        cfg = {"migration_mode": "functional",
+               "source_apps": [{"name": a, "language": "java"} for a in apps],
+               "coverage": {"resolve_threshold": 0.75}}
+        with open(self.config_path, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh)
+
+    def test_shared_entity_coalesces_across_apps(self):
+        # Two apps, each a producer package whose members tokenize to PRODUCER.
+        for app in ("appkafka", "apppulsar"):
+            nodes = [
+                (1, "%s-c1" % app, "Producer", "class", "src/producer/Producer.java"),
+                (2, "%s-c2" % app, "ProducerImpl", "class", "src/producer/ProducerImpl.java"),
+                (3, "%s-m1" % app, "send", "method", "src/producer/Producer.java"),
+            ]
+            edges = [(1, 3, "calls", 0.9, "src/producer/Producer.java")]
+            build_fixture_db(self.db_for(app), nodes, edges)
+        write_overlay(self.overlay_path, [
+            overlay_row("appkafka", "appkafka-m1", name="send",
+                        statement="Publishes a record to the broker.", confidence=0.9),
+            overlay_row("apppulsar", "apppulsar-m1", name="send",
+                        statement="Publishes a message to the broker.", confidence=0.9),
+        ])
+        self._write_java_config(["appkafka", "apppulsar"])
+        write_coverage_report(self.coverage_path, coverage=1.0)
+        voc = os.path.join(self.tmp, "vocabulary.json")
+        _vocab_file(voc, entities=[("PRODUCER", 6)], actions=[("SEND", 2)])
+
+        graph, _rt, _d, errors = self.run_build(
+            ["appkafka", "apppulsar"], skip_front_half=True, vocab_path=voc)
+        self.assertEqual(errors, [], "schema errors: %s" % errors)
+        # Find the domain(s) named for PRODUCER and assert ONE spans BOTH apps.
+        coalesced = []
+        for dname, dom in graph["domains"].items():
+            apps_in = set()
+            for req in dom["requirements"].values():
+                for br in req.get("business_rules", []):
+                    sa = (br.get("provenance") or {}).get("source_app")
+                    if sa:
+                        apps_in.add(sa)
+            if len(apps_in) > 1:
+                coalesced.append((dname, sorted(apps_in)))
+        self.assertTrue(
+            any("Producer" in dn for dn, _ in coalesced),
+            "expected a Producer capability spanning both apps; coalesced=%s "
+            "all_domains=%s" % (coalesced, list(graph["domains"].keys())))
 
 
 if __name__ == "__main__":

@@ -594,5 +594,162 @@ class TestCheckProjection(unittest.TestCase):
         self.assertEqual(r["bindable"], 0)
 
 
+# ===========================================================================
+# PHASE 1 — modern-language vocabulary mining (camelCase tokenizer, class/
+# interface entity miner, accessor-verb skip). These prove the glossary now
+# yields real domain terms from modern OO code, not one opaque token.
+# ===========================================================================
+import vocabulary as _voc  # noqa: E402
+
+
+def _java_node(symid, name, kind, file="src/Producer.java"):
+    return {"symbol": symid, "symbol_id": symid, "name": name,
+            "kind": kind, "file": file, "_has_behavior_out_edge": True}
+
+
+class TestModernTokenizer(unittest.TestCase):
+    """The camelCase/PascalCase tokenizer (the root fix: modern names used to
+    collapse to one opaque token)."""
+
+    def test_splits_camelcase(self):
+        self.assertEqual(_voc._tokens("getProducerName"),
+                         ["GET", "PRODUCER", "NAME"])
+
+    def test_splits_pascalcase(self):
+        self.assertEqual(_voc._tokens("KafkaProducer"), ["KAFKA", "PRODUCER"])
+
+    def test_handles_acronym_runs(self):
+        # An acronym run ends where the next word begins.
+        self.assertEqual(_voc._tokens("parseXMLToJSON"),
+                         ["PARSE", "XML", "TO", "JSON"])
+        self.assertEqual(_voc._tokens("getHTTPResponse"),
+                         ["GET", "HTTP", "RESPONSE"])
+
+    def test_dots_are_not_delimiters(self):
+        # The dot is intentionally NOT a delimiter: mainframe qualified dataset
+        # names (OEM.DB2.SDSNLOAD) must tokenize byte-identically to the original
+        # hyphen/underscore splitter. camelCase inside still splits.
+        self.assertEqual(_voc._tokens("OEM.DB2.SDSNLOAD"), ["OEM.DB2.SDSNLOAD"])
+        self.assertEqual(_voc._tokens("client.api.getProducer"),
+                         ["CLIENT.API.GET", "PRODUCER"])
+
+    def test_preserves_mainframe_names(self):
+        # REGRESSION: hyphen/underscore mainframe names are unchanged.
+        self.assertEqual(_voc._tokens("DALYTRAN-RECORD"), ["DALYTRAN", "RECORD"])
+        self.assertEqual(_voc._tokens("2000-POST-TRANSACTION"),
+                         ["2000", "POST", "TRANSACTION"])
+        self.assertEqual(_voc._tokens("ACCT_ID"), ["ACCT", "ID"])
+
+    def test_digit_bearing_mainframe_tokens_preserved(self):
+        # CRITICAL REGRESSION GUARD (adversarial finding): the camelCase splitter
+        # must NEVER split a letter from a digit, or mainframe domain entities
+        # like DB2 fragment ([DB,2]) and the '2' is dropped — silently breaking
+        # term resolution. These all stay single tokens.
+        self.assertEqual(_voc._tokens("DB2"), ["DB2"])
+        self.assertEqual(_voc._tokens("STAT1"), ["STAT1"])
+        self.assertEqual(_voc._tokens("ACCTNO1A"), ["ACCTNO1A"])
+        self.assertEqual(_voc._tokens("9V2"), ["9V2"])       # PIC clause
+        self.assertEqual(_voc._tokens("COBOL85"), ["COBOL85"])
+        self.assertEqual(_voc._tokens("DB2-AUTHFRDS"), ["DB2", "AUTHFRDS"])
+
+    def test_action_tokens_drop_numeric_prefix_on_modern_and_mainframe(self):
+        self.assertEqual(_voc._action_tokens("2000-POST-TRANSACTION"),
+                         ["POST", "TRANSACTION"])
+        self.assertEqual(_voc._action_tokens("sendMessage"), ["SEND", "MESSAGE"])
+
+
+class TestModernMiners(unittest.TestCase):
+    """The class/interface entity miner + accessor-verb skip in the action
+    miner — the two changes that make mining productive on modern code."""
+
+    def setUp(self):
+        self.kinds = _voc.coverage_kinds({})
+        self.nodes = [
+            _java_node("c1", "KafkaProducer", "class"),
+            _java_node("c2", "ProducerRecord", "class"),
+            _java_node("i1", "Producer", "interface"),
+            _java_node("i2", "Partitioner", "interface"),
+            # methods: real verbs + boilerplate accessors
+            _java_node("m1", "send", "method"),
+            _java_node("m2", "commitTransaction", "method"),
+            _java_node("m3", "getProducerName", "method"),
+            _java_node("m4", "isConnected", "method"),
+            _java_node("m5", "setAcks", "method"),
+        ]
+
+    def test_type_entity_miner_extracts_class_nouns(self):
+        ents = _voc.mine_type_entities(self.nodes, self.kinds, 0)
+        # PRODUCER is the dominant noun across KafkaProducer/ProducerRecord/Producer.
+        self.assertIn("PRODUCER", ents)
+        self.assertGreaterEqual(ents["PRODUCER"]["_freq"], 3)
+        self.assertEqual(ents["PRODUCER"]["term_type"], "entity")
+        # PARTITIONER is also a type entity.
+        self.assertIn("PARTITIONER", ents)
+
+    def test_type_entity_miner_drops_oo_scaffolding(self):
+        nodes = [_java_node("c", "ProducerBuilder", "class"),
+                 _java_node("c2", "MessageFactory", "class")]
+        ents = _voc.mine_type_entities(nodes, self.kinds, 0)
+        self.assertNotIn("BUILDER", ents)   # _TYPE_NOISE
+        self.assertNotIn("FACTORY", ents)
+        self.assertIn("PRODUCER", ents)
+        self.assertIn("MESSAGE", ents)
+
+    def test_action_miner_keeps_real_verbs(self):
+        acts = _voc.mine_actions(self.nodes, self.kinds, 0)
+        self.assertIn("SEND", acts)
+        self.assertIn("COMMIT", acts)
+
+    def test_action_miner_skips_accessor_boilerplate(self):
+        acts = _voc.mine_actions(self.nodes, self.kinds, 0)
+        # get/is/set accessors name no domain action.
+        self.assertNotIn("GET", acts)
+        self.assertNotIn("IS", acts)
+        self.assertNotIn("SET", acts)
+
+    def test_type_entities_from_non_class_kinds(self):
+        # Go/Rust/C/C++ declare domain types as struct/trait/enum, not `class`.
+        # Entity mining must capture them too, or those languages get zero
+        # entity-based naming + coalescing. (Cross-language strength fix.)
+        nodes = [
+            _java_node("s1", "KafkaProducer", "struct"),   # Go/Rust/C struct
+            _java_node("t1", "Producer", "trait"),          # Rust trait
+            _java_node("e1", "MessageRoutingMode", "enum"), # enum
+            _java_node("r1", "ProducerRecord", "record"),   # record
+        ]
+        ents = _voc.mine_type_entities(nodes, self.kinds, 0)
+        self.assertIn("PRODUCER", ents)
+        self.assertGreaterEqual(ents["PRODUCER"]["_freq"], 3)
+        self.assertIn("MESSAGE", ents)
+
+    def test_classes_are_not_mistaken_for_actions(self):
+        # class/interface kinds are not behavior_kinds -> no action mined from them.
+        acts = _voc.mine_actions(
+            [_java_node("c", "KafkaProducer", "class")], self.kinds, 0)
+        self.assertEqual(acts, {})
+
+    def test_field_stem_boilerplate_not_an_entity(self):
+        # Boolean/accessor FIELDS (isRetry, hasInflight, newTopics) must not leak
+        # their boilerplate stem (IS/HAS/NEW) into the entity space — the third
+        # entity miner besides type/estate. (Adversarial re-verification finding.)
+        nodes = [_java_node("f1", "isRetry", "field"),
+                 _java_node("f2", "hasInflight", "field"),
+                 _java_node("f3", "newTopics", "field"),
+                 _java_node("f4", "accountBalance", "field")]
+        ents = _voc.mine_field_entities(nodes, self.kinds, 0)
+        for boiler in ("IS", "HAS", "NEW", "GET", "SET"):
+            self.assertNotIn(boiler, ents)
+        self.assertIn("ACCOUNT", ents)  # the real noun stem survives
+
+    def test_bootstrap_unions_type_entities(self):
+        # End-to-end through the bootstrap union (proves the miner is wired in).
+        doc = _voc.bootstrap(":memory:", config={}, out_path="/tmp/_t_modern_voc.json",
+                             min_freq=2, nodes=self.nodes)
+        canon = {t["canonical"]: t for t in doc["terms"]}
+        self.assertIn("PRODUCER", canon)
+        self.assertEqual(canon["PRODUCER"]["term_type"], "entity")
+        os.remove("/tmp/_t_modern_voc.json")
+
+
 if __name__ == "__main__":
     unittest.main()

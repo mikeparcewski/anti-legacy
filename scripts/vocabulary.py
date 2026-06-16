@@ -136,8 +136,29 @@ VOCAB_VERSION = "1.0"
 DEFAULT_MAX_SOURCES_PER_TERM = 0
 
 # Token splitter: COBOL/copybook names are hyphen/underscore delimited
-# (DALYTRAN-RECORD, ACCT_ID, WS-FLG). Pure language-mechanical, not domain.
+# (DALYTRAN-RECORD, ACCT_ID, WS-FLG). EXACTLY the original delimiter set — the
+# camelCase pass below inserts its boundaries as a private sentinel, not a space,
+# so this stays byte-identical to the pre-modern splitter on mainframe names
+# (literal spaces/dots in a name are NOT delimiters: 'OEM.DB2.SDSNLOAD' and a
+# 'Table of Contents' doc node tokenize exactly as before). Pure language-mechanical.
 _SPLIT_RE = re.compile(r"[-_]+")
+# Private boundary marker the camelCase pass inserts; never appears in source.
+_CAMEL_SEP = "\x00"
+# camelCase / PascalCase sub-splitter for MODERN identifiers (getProducerName,
+# KafkaProducer, parseXMLToJSON). After the hyphen/underscore split, a separator
+# is INSERTED at each case-transition boundary, then the chunk is split on it.
+# Two boundary kinds:
+#   * camelCase word boundary  — a lowercase letter immediately before an
+#     uppercase one:  get|Producer, Kafka|Producer, message|Id
+#   * acronym→word boundary    — an uppercase that begins a new Capitalized word
+#     at the tail of an acronym run:  XML|To, HTTP|Response
+# CRITICAL: boundaries are between LETTERS only — never letter↔digit. Mainframe
+# tokens that embed digits (DB2, STAT1, ACCTNO1A, PIC clause 9V2) therefore pass
+# through UNCHANGED, exactly as the old hyphen/underscore-only splitter left them.
+# That preserves mainframe domain-term resolution (DB2 stays one token) while
+# still splitting modern names. Pure language-mechanical, not domain.
+_CAMEL_ACRONYM = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
+_CAMEL_WORD = re.compile(r"(?<=[a-z])(?=[A-Z])")
 # A pure-numeric COBOL paragraph sequence prefix (2000-, 0000-, 2700-).
 _NUMERIC_RE = re.compile(r"^[0-9]+$")
 # Abbreviation candidate length ceiling (a tokenizer knob, not a domain rule).
@@ -148,7 +169,27 @@ MAX_ABBREV_LEN = 6
 _STOPWORDS = {
     "FILLER", "X", "N", "S", "V", "PIC", "VALUE", "VALUES", "OF", "TO",
     "FD", "WS", "LS", "LK", "FILE", "REDEFINES", "OCCURS", "COMP", "COMP3",
+    # connective tokens that surface from camelCase modern names (sendOffsetsTo
+    # Transaction -> ...TO...) — language mechanics, never a domain noun/verb.
+    "AND", "OR", "FROM", "WITH", "FOR", "THE", "BY", "ON", "IN", "AT", "AS",
 }
+# MODERN accessor/boilerplate leading verbs. These are language mechanics, not
+# domain actions: a getter/setter names no business behavior, so the action
+# miner skips them and the capability is named by its entity (e.g. PRODUCER)
+# instead of `GetProducerCapability`. A real verb (send/commit/flush/route)
+# is unaffected.
+_ACTION_BOILERPLATE = {"GET", "SET", "IS", "HAS", "NEW"}
+# MODERN OO type-name mechanics that are not domain entities. The dominant
+# domain noun (PRODUCER, MESSAGE) still surfaces by frequency; this just keeps
+# pure scaffolding tokens out of the entity tally.
+_TYPE_NOISE = {"BUILDER", "IMPL", "FACTORY", "ABSTRACT", "BASE", "EXCEPTION", "DEFAULT"}
+# The graph kinds whose NAME is a domain type/entity in modern languages. Covers
+# OO classes/interfaces AND the type-declaring kinds other languages use instead:
+# Go/Rust/C/C++ structs, Rust traits, enums, and records — without these, entity
+# mining (and the capability naming + cross-app coalescing it drives) is blind to
+# Go/Rust/C domain types, which declare no `class`. Mainframe estates emit none of
+# these kinds, so the wider set is a no-op there.
+_DEFAULT_TYPE_KINDS = ["class", "interface", "struct", "trait", "enum", "record"]
 
 
 # ---------------------------------------------------------------------------
@@ -212,10 +253,12 @@ def coverage_kinds(config: dict) -> dict:
         nouns = [k for k in structural if k in _NOUN_STRUCTURAL_KINDS]
     else:
         nouns = sorted(_NOUN_STRUCTURAL_KINDS)
+    types = _norm_kind_list(cov.get("type_kinds")) or list(_DEFAULT_TYPE_KINDS)
     return {
         "behavior_kinds": behavior,
         "estate_behavior_kinds": estate,
         "noun_structural_kinds": nouns or sorted(_NOUN_STRUCTURAL_KINDS),
+        "type_kinds": types,
     }
 
 
@@ -238,8 +281,33 @@ def max_sources_per_term(config: dict) -> int:
 # Tokenizers (language-mechanical only).
 # ---------------------------------------------------------------------------
 def _tokens(name: str) -> list:
-    """Split a graph node name on hyphen/underscore; drop empties; upper-case."""
-    return [t.upper() for t in _SPLIT_RE.split(name or "") if t]
+    """Split a graph node name into upper-cased domain tokens.
+
+    Two-stage, language-agnostic: first split on hyphen/underscore/space/dot
+    (COBOL/copybook + dotted modern names), then split each chunk on
+    camelCase/PascalCase boundaries (modern identifiers). Mainframe all-caps
+    hyphen names are unaffected (each chunk is a single all-caps run):
+      'DALYTRAN-RECORD'         -> ['DALYTRAN', 'RECORD']
+      '2000-POST-TRANSACTION'   -> ['2000', 'POST', 'TRANSACTION']
+    Modern camelCase/PascalCase now yields real tokens instead of one blob:
+      'getProducerName'         -> ['GET', 'PRODUCER', 'NAME']
+      'KafkaProducer'           -> ['KAFKA', 'PRODUCER']
+      'parseXMLToJSON'          -> ['PARSE', 'XML', 'TO', 'JSON']
+    """
+    if not name:
+        return []
+    # Insert a private sentinel at each camelCase / acronym→word boundary, split on
+    # the original hyphen/underscore delimiters, then split each piece on the
+    # sentinel. Digits never trigger a boundary and literal spaces/dots are NOT
+    # delimiters, so mainframe names tokenize byte-identically to the original.
+    marked = _CAMEL_ACRONYM.sub(_CAMEL_SEP, name)
+    marked = _CAMEL_WORD.sub(_CAMEL_SEP, marked)
+    out = []
+    for chunk in _SPLIT_RE.split(marked):
+        for piece in chunk.split(_CAMEL_SEP):
+            if piece:
+                out.append(piece.upper())
+    return out
 
 
 def _action_tokens(name: str) -> list:
@@ -317,17 +385,48 @@ def mine_field_entities(nodes: list, kinds: dict,
         if not toks:
             continue
         stem = toks[0]
-        if stem in _STOPWORDS or _NUMERIC_RE.match(stem):
+        # Modern boolean/accessor fields (isRetry, hasInflight, newTopics) tokenize
+        # to a boilerplate STEM (IS/HAS/NEW) that is language mechanics, not a domain
+        # noun — exclude it here too (mine_type_entities/mine_actions already do), or
+        # it leaks into the entity space and names an `IsCapability`.
+        if stem in _STOPWORDS or stem in _ACTION_BOILERPLATE or _NUMERIC_RE.match(stem):
             continue
         cand = out.setdefault(stem, _new_candidate(stem, "entity", "field-token"))
         _add_source(cand, n, nk, cap)
     return out
 
 
+def mine_type_entities(nodes: list, kinds: dict,
+                       cap: int = DEFAULT_MAX_SOURCES_PER_TERM) -> dict:
+    """MODERN entity candidates: the significant tokens of class/interface names
+    (`KafkaProducer` -> PRODUCER + KAFKA, `MessageRouter` -> MESSAGE + ROUTER).
+    The dominant domain noun (PRODUCER, MESSAGE) surfaces by frequency across the
+    type surface, which is exactly what names a capability and lets the same
+    capability coalesce across source apps. Pure OO scaffolding tokens
+    (Builder/Impl/Factory/Exception) are dropped via `_TYPE_NOISE`. This is the
+    modern analogue of mine_estate_entities (mainframe object-kind nouns)."""
+    types = set(kinds.get("type_kinds", _DEFAULT_TYPE_KINDS))
+    out: dict = {}
+    for n in nodes:
+        nk = _normalize_node_kind(n["kind"])
+        if nk not in types:
+            continue
+        for tok in _tokens(n["name"]):
+            if (tok in _STOPWORDS or tok in _TYPE_NOISE or tok in _ACTION_BOILERPLATE
+                    or _NUMERIC_RE.match(tok) or len(tok) < 3):
+                continue
+            cand = out.setdefault(tok, _new_candidate(tok, "entity", "type-token"))
+            _add_source(cand, n, nk, cap)
+    return out
+
+
 def mine_actions(nodes: list, kinds: dict,
                  cap: int = DEFAULT_MAX_SOURCES_PER_TERM) -> dict:
-    """ACTION candidates: leading verb token of behavior-kind (function/module)
-    names, after dropping pure-numeric COBOL sequence prefixes."""
+    """ACTION candidates: leading verb token of behavior-kind (function/module/
+    method) names, after dropping pure-numeric COBOL sequence prefixes. MODERN
+    accessor/boilerplate leading verbs (get/set/is/has/new) are skipped so a
+    getter contributes no spurious action and the capability is named by its
+    entity instead — a real verb (send/commit/flush/route) is unaffected."""
     behavior = set(kinds["behavior_kinds"])
     out: dict = {}
     for n in nodes:
@@ -338,7 +437,7 @@ def mine_actions(nodes: list, kinds: dict,
         if not toks:
             continue
         verb = toks[0]
-        if verb in _STOPWORDS:
+        if verb in _STOPWORDS or verb in _ACTION_BOILERPLATE:
             continue
         cand = out.setdefault(verb, _new_candidate(verb, "action", "behavior_kinds"))
         _add_source(cand, n, nk, cap)
@@ -510,7 +609,7 @@ def bootstrap(db, config=None, out_path=DEFAULT_OUT, min_freq=DEFAULT_MIN_FREQ,
     # This keeps READ/POST/UPDATE classified as actions rather than being
     # captured first as an incidental field token.
     candidates: dict = {}
-    for miner in (mine_estate_entities, mine_actions, mine_field_entities, mine_abbreviations):
+    for miner in (mine_estate_entities, mine_type_entities, mine_actions, mine_field_entities, mine_abbreviations):
         for canon, cand in miner(nodes, kinds, cap).items():
             candidates.setdefault(canon, cand)
 
@@ -625,7 +724,7 @@ def project_terms_to_graph(db, vocab_path=DEFAULT_OUT, *, config=None,
 
     # Re-mine uncapped so every grounding SymbolId is available to bind.
     candidates: dict = {}
-    for miner in (mine_estate_entities, mine_actions, mine_field_entities, mine_abbreviations):
+    for miner in (mine_estate_entities, mine_type_entities, mine_actions, mine_field_entities, mine_abbreviations):
         for canon, cand in miner(nodes, kinds, _PROJECT_ALL_SOURCES).items():
             candidates.setdefault(canon, cand)
 
@@ -695,7 +794,7 @@ def check_projection(db, *, config=None, config_ref=we.CONFIG_PATH,
 
     # Presence-only re-mine (cap=1): which confirmed terms ground on THIS graph.
     candidates: dict = {}
-    for miner in (mine_estate_entities, mine_actions, mine_field_entities, mine_abbreviations):
+    for miner in (mine_estate_entities, mine_type_entities, mine_actions, mine_field_entities, mine_abbreviations):
         for canon, cand in miner(nodes, kinds, 1).items():
             candidates.setdefault(canon, cand)
     bindable = [c for c in confirmed

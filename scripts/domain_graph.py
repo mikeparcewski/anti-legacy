@@ -62,6 +62,7 @@ if _HERE not in sys.path:
 
 import coverage as cov          # noqa: E402
 import wicked_estate as we      # noqa: E402
+import vocabulary as vocab      # noqa: E402  (shared tokenizer + miner kind sets for glossary-direct naming)
 
 REPO_ROOT = os.path.dirname(_HERE)
 DEFAULT_CONFIG = os.path.join(REPO_ROOT, ".anti-legacy", "config.json")
@@ -228,6 +229,74 @@ def _confirmed_terms_by_type(vocab_path: str) -> dict:
     return out
 
 
+def _confirmed_term_freqs(vocab_path: str) -> dict:
+    """Confirmed canonicals bucketed by type WITH their glossary freq —
+    {"entity": {canon: freq}, "action": {canon: freq}}. Freq ranks which term
+    wins when a name carries more than one confirmed token (e.g. KafkaProducer
+    -> KAFKA + PRODUCER; the higher-freq PRODUCER is the head noun). Empty
+    buckets on a missing/invalid glossary (clean fallback)."""
+    out = {"entity": {}, "action": {}}
+    if not vocab_path or not os.path.isfile(vocab_path):
+        return out
+    try:
+        with open(vocab_path, "r", encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return out
+    for t in (doc.get("terms") if isinstance(doc, dict) else None) or []:
+        if t.get("status") == "confirmed" and t.get("canonical") \
+                and t.get("term_type") in out:
+            out[t["term_type"]][t["canonical"]] = int(t.get("freq", 0) or 0)
+    return out
+
+
+def _derive_term_index_from_glossary(nodes_list, vocab_path):
+    """Glossary-DIRECT term index — {node_name -> {entity, action}} derived by
+    matching each node name's tokens against the CONFIRMED glossary, WITHOUT the
+    engine `domain_*` annotation round-trip.
+
+    This is the engine-independent path the projected-tags reader (the native
+    `annotate`/`nodes --annotated-with` seam) falls back to when the engine
+    exposes no annotation store (e.g. wicked-estate releases without the native
+    `annotate` subcommand). The glossary is already the term MEANING source
+    (Read-able, default-0); deriving the per-node binding here just skips the
+    re-projectable engine cache. Each node's:
+      * entity = the highest-glossary-freq confirmed-entity token in its name
+        (the dominant domain noun — head noun of a compound like KafkaProducer);
+      * action = the first confirmed-action token in its name (skipping the
+        modern accessor/boilerplate verbs the action miner already excludes).
+    Returns {} when the glossary has no confirmed terms (clean fallback to the
+    statement-noun namer)."""
+    freqs = _confirmed_term_freqs(vocab_path)
+    ent_freq, act_freq = freqs["entity"], freqs["action"]
+    if not ent_freq and not act_freq:
+        return {}
+    index = {}
+    for n in nodes_list:
+        name = n.get("name")
+        if not name:
+            continue
+        toks = vocab._tokens(name)
+        slot = {}
+        # Boolean/accessor boilerplate (get/set/is/has/new) is language mechanics,
+        # never a domain noun OR verb — exclude it from BOTH the entity and the
+        # action choice so 'isConnected' does not name an IS capability.
+        ent_hits = [(ent_freq[t], t) for t in toks
+                    if t in ent_freq and t not in vocab._ACTION_BOILERPLATE]
+        if ent_hits:
+            # highest freq wins; ties -> alphabetical (deterministic)
+            slot["entity"] = max(ent_hits, key=lambda ft: (ft[0], ft[1]))[1]
+        for t in toks:
+            if t in vocab._ACTION_BOILERPLATE:
+                continue
+            if t in act_freq:
+                slot["action"] = t
+                break
+        if slot:
+            index[name] = slot
+    return index
+
+
 def build_term_index(db_path: str, vocab_path: str) -> dict:
     """Read the `domain_*` tags `vocabulary project` bound onto db_path and return
     {node_name -> {"entity": canonical, "action": canonical}} (ISS-02).
@@ -243,15 +312,38 @@ def build_term_index(db_path: str, vocab_path: str) -> dict:
     index: dict = {}
     for term_type, key in (("entity", "domain_entity"), ("action", "domain_action")):
         for canonical in terms[term_type]:
+            # Boolean/accessor boilerplate is language mechanics, never a domain
+            # entity OR action — even if it slipped into the glossary as a confirmed
+            # term it must not name a capability (an `IsCapability`). Filter it on
+            # the engine-tag path too, matching the glossary-direct fallback.
+            if canonical in vocab._ACTION_BOILERPLATE:
+                continue
             for node in we.nodes_annotated_with(db_path, key, canonical):
                 nm = node.get("name")
                 if nm:
                     index.setdefault(nm, {})[term_type] = canonical
+    # Engine-independent fallback: when the engine exposes no projected `domain_*`
+    # tags (no native annotate store on this release), derive the same term index
+    # directly from the confirmed glossary + node names. The projected-tags path
+    # above wins when present (the engine cache is authoritative); this only fills
+    # in when it yielded nothing, so naming is never left on the statement-noun
+    # fallback merely because the engine can't hold annotations.
+    if not index:
+        # Only enumerate nodes when the glossary actually has confirmed terms to
+        # bind — avoids a list_nodes() call (and its db-open) on an empty/absent
+        # glossary, keeping the no-glossary path a clean empty return.
+        freqs = _confirmed_term_freqs(vocab_path)
+        if freqs["entity"] or freqs["action"]:
+            try:
+                index = _derive_term_index_from_glossary(
+                    we.list_nodes(db_path), vocab_path)
+            except we.WickedEstateError:
+                index = {}
     return index
 
 
 def gather_app(app_name: str, db_path: str, settings: dict, overlay_index: dict,
-               vocab_path: str = DEFAULT_VOCAB_PATH):
+               vocab_path: str = DEFAULT_VOCAB_PATH, language: str = None):
     """Gather everything §I5 needs for one source app, all via the helper.
 
     Returns a dict:
@@ -262,6 +354,9 @@ def gather_app(app_name: str, db_path: str, settings: dict, overlay_index: dict,
       annotations  : {symbol_id -> overlay record} (per-node, db_id-tolerant).
       edges_out    : {symbol_id -> [(tgt_symbol_id, kind), ...]}  (calls + data).
       term_index   : {node_name -> {entity, action}} from the engine domain_* tags.
+      language     : the source app's declared language (drives the capability
+                     partition strategy — mainframe stays on call-affinity,
+                     modern uses package structure; see _capability_partition).
     """
     if not os.path.exists(db_path):
         raise DomainGraphError(
@@ -304,6 +399,7 @@ def gather_app(app_name: str, db_path: str, settings: dict, overlay_index: dict,
         "annotations": annotations,
         "edges_out": edges_out,
         "term_index": term_index,
+        "language": (language or "").strip().lower(),
     }
 
 
@@ -581,11 +677,78 @@ def _sub_partition_by_package(member_ids, nodes):
     groups: dict = {}
     for sid in member_ids:
         file_path = (nodes.get(sid) or {}).get("file") or ""
+        if not isinstance(file_path, str):
+            file_path = ""  # defensive: a non-str file never crashes the split
         norm = file_path.replace("\\", "/").rstrip("/")
         slash = norm.rfind("/")
         key = norm[:slash] if slash >= 0 else ""
         groups.setdefault(key, []).append(sid)
     return groups
+
+
+# Mainframe languages whose call graph IS the capability structure (discrete
+# programs invoked by CALL/EXEC PGM → community detection recovers capabilities).
+# Everything else is treated as modern (OO/package-structured), where dense call
+# graphs collapse into blobs or explode into per-method singletons and the
+# package/directory is the better capability boundary. Repo-agnostic.
+_MAINFRAME_LANGUAGES = {
+    "cobol", "jcl", "cics", "ims", "db2", "natural", "pli", "pl/i", "rpg",
+    "rpg400", "rpgle", "assembler", "asm", "fortran",
+}
+
+
+def _capability_partition(app, max_members):
+    """Return the FINAL capability grouping {label -> [behavior_symbol_ids]} for
+    one app, choosing the partition signal by the app's language (Phase 2):
+
+      * MAINFRAME (cobol/jcl/…): the call-affinity communities are the capability
+        structure — used as-is (oversized communities are still package-split by
+        the caller). This is the historical, correct behavior; untouched.
+      * MODERN (java/…): dense OO call graphs do not express capabilities — they
+        collapse into one mega-community or explode into per-method singletons
+        (interface surfaces). Package/directory structure IS the capability
+        boundary, so behaviour nodes are grouped by their parent source package.
+
+    `config.coverage.capability_partition` overrides the auto choice:
+      "auto" (default) → language-driven as above; "calls" → always communities;
+      "package" → always package-grouped. Mainframe estates are never silently
+    re-partitioned (auto keeps them on calls), so this is a pure modern-code win.
+    """
+    communities = app["communities"]
+    behavior_ids = app["behavior_ids"]
+    nodes = app["nodes"]
+    strategy = app.get("capability_partition", "auto")
+    language = (app.get("language") or "").lower()
+
+    if strategy == "auto":
+        use_package = language and language not in _MAINFRAME_LANGUAGES
+    else:
+        use_package = strategy == "package"
+
+    def _call_groups():
+        # Call-affinity communities (mainframe / explicit "calls"). Drop the pure
+        # structural communities that carry no behavior member.
+        return {label: [m for m in members if m in behavior_ids]
+                for label, members in communities.items()
+                if any(m in behavior_ids for m in members)}
+
+    if use_package:
+        # Flatten all behavior members across communities, de-duplicated and
+        # order-stable (dict.fromkeys): a degenerate engine partition with
+        # overlapping community membership must not duplicate a symbol into two
+        # capabilities (and thus into legacy_components / the round-trip set).
+        all_behavior = list(dict.fromkeys(
+            m for c in communities.values() for m in c if m in behavior_ids))
+        pkg_groups = _sub_partition_by_package(all_behavior, nodes)
+        # No real package signal (a flat module: every node in one directory) →
+        # package-partition would collapse the app into a single capability. Fall
+        # back to call-affinity, which still distinguishes sub-capabilities. Only
+        # auto mode falls back; an explicit "package" override is honored as asked.
+        if strategy == "auto" and len(pkg_groups) <= 1:
+            return _call_groups()
+        return {("pkg:%s" % k if k else "pkg:<root>"): v for k, v in pkg_groups.items()}
+
+    return _call_groups()
 
 
 # ---------------------------------------------------------------------------
@@ -956,22 +1119,22 @@ def assemble_graph(apps, settings, migration_mode, net_new_specs=None):
     max_members = int(settings.get("max_community_size", DEFAULT_MAX_COMMUNITY_MEMBERS))
 
     for app in apps:
-        communities = app["communities"]
-        behavior_ids = app["behavior_ids"]
-        for label, members in communities.items():
-            # A community becomes a capability iff it holds >=1 behavior-bearing
-            # node. Singletons are kept (never dropped). Pure-structural
-            # communities (0 behavior members) are skipped — they carry no rule.
-            behavior_members = [m for m in members if m in behavior_ids]
+        # Phase 2: choose the capability partition by language — mainframe stays on
+        # call-affinity communities; modern code partitions by source package (a
+        # dense OO call graph expresses no capabilities). Returns the final
+        # {label -> behavior_member_ids} groups (pure-structural groups already
+        # dropped).
+        capability_groups = _capability_partition(app, max_members)
+        for label, behavior_members in capability_groups.items():
+            # A group becomes a capability iff it holds >=1 behavior-bearing node.
             if not behavior_members:
                 continue
 
-            # Sub-partition oversized communities so each requirement stays tractable.
-            # Dense modern code (Kafka, Pulsar, Spring monoliths) collapses into a
-            # near-fully-connected call graph → one giant community → meaningless
-            # 64 K-rule "capability".  Split by file/package prefix; each sub-group
-            # becomes its own requirement.  Mainframe systems are unaffected (their
-            # clusters are well below the threshold).
+            # Sub-partition oversized groups so each requirement stays tractable.
+            # Dense modern code (Kafka, Pulsar, Spring monoliths) can still leave a
+            # single package (or a giant mainframe call-community) above the cap;
+            # split by file/package prefix so each sub-group becomes its own
+            # requirement.  Mainframe call-clusters are typically well below it.
             if len(behavior_members) > max_members:
                 sub_groups = _sub_partition_by_package(behavior_members, app["nodes"])
             else:
@@ -1301,11 +1464,22 @@ def build(
     overlay = we._overlay_path(overlay_path)
     overlay_index = cov.load_annotations(overlay)
 
+    # Per-app language (drives the Phase 2 capability-partition strategy) and the
+    # optional config override, both resolved from config.
+    lang_by_app = {
+        a.get("name"): (a.get("language") or "")
+        for a in (config.get("source_apps") or []) if isinstance(a, dict)
+    }
+    partition_override = ((config.get("coverage") or {}).get("capability_partition")
+                          or "auto")
+
     # Per-app gather (cluster() / list_nodes() are single-db).
     apps = []
     for app_name, db_path in resolve_app_dbs(config, explicit_db, graphs_dir=graphs_dir):
-        apps.append(gather_app(app_name, db_path, settings, overlay_index,
-                               vocab_path=vocab_path))
+        app = gather_app(app_name, db_path, settings, overlay_index,
+                         vocab_path=vocab_path, language=lang_by_app.get(app_name))
+        app["capability_partition"] = partition_override
+        apps.append(app)
 
     # (A') front-half RE-DERIVED from the same overlay (Defect-2 binding): the
     # report scalar alone can be stale relative to the live overlay; bind them.
