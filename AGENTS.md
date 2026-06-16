@@ -130,6 +130,7 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 
 | Situation | Skill |
 |---|---|
+| One-command full conversion (formulate DoD → approve → drive the whole pipeline) | `anti-legacy:convert` |
 | Starting a new project | `anti-legacy:setup` |
 | Indexing legacy source into the code graph (any language, mainframe or modern) | `anti-legacy:survey` |
 | Structural analysis of the code graph | `anti-legacy:analyze` |

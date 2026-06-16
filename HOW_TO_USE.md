@@ -375,7 +375,7 @@ Set `language: cobol` on the source app. Survey runs `wicked-estate index` — f
 
 ### Java or C# monolith
 
-Set the appropriate language. Survey uses the find+grep track. Pay attention to the analysis report — monoliths often have surprisingly clear domain boundaries once you look at which classes share data access patterns.
+Set the appropriate language. Survey uses `wicked-estate index` (which natively supports Java, C#, and 90+ other languages). Pay attention to the analysis report — monoliths often have surprisingly clear domain boundaries once you look at which classes share data access patterns.
 
 ### Partial modernization (one domain at a time)
 

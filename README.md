@@ -79,7 +79,7 @@ setup → survey → analyze → extraction → blueprint → test-strategy
 
 `survey` runs `wicked-estate index` over each source repo (one graph DB per repo, federated via cross-graph for multi-repo); `extraction` crawls that code graph with adaptive ring expansion and writes a business rule onto every behavior-bearing node — each ends **resolved** (rule + confidence + provenance) or **risk-flagged** (human research queue) — to a provable coverage terminal (`coverage-report.json`).
 
-Five gates: **GATE 1** (design, human/architect), **GATE 2** (plan, human — PM + tech lead both sign), **GATE 3** (build integrity, auto — clears on PASS evidence), **GATE 3B** (semantic, human — rule-coverage round-trip review), **GATE 4** (UAT, human — must differ from the GATE 1 evaluator).
+Eight gates: **GATE 0** (discovery, auto — survey integrity), **GATE 1** (design, human/architect), **GATE 1B** (semantic-join, human — multi-repo only), **GATE 2** (plan, human — PM + tech lead both sign), **GATE 3** (build integrity, auto — clears on PASS evidence), **GATE 3B** (semantic, human — rule-coverage round-trip review), **GATE 4** (UAT, human — must differ from the GATE 1 evaluator), **GATE 5** (completeness, auto — zero HIGH findings).
 
 Or run individual phases: `anti-legacy:setup`, `anti-legacy:survey`, etc.
 
