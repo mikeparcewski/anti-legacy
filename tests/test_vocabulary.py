@@ -368,7 +368,7 @@ class TestProject(unittest.TestCase):
         self._real_annotate_kv = _VOCAB.we.annotate_kv
 
         def _fake(db, symbol_id, key, value, *, confidence=None, provenance=None,
-                  author=None, binary=None):
+                  author=None, binary=None, **_kw):
             self._calls.append({"sid": symbol_id, "key": key, "value": value,
                                 "confidence": confidence})
             return {"annotated": True}
@@ -424,7 +424,7 @@ class TestProject(unittest.TestCase):
         # The engine refuses one specific SymbolId (an ambiguous name) — it must
         # be counted as skipped, never bound.
         def _fake_one_ambiguous(db, symbol_id, key, value, *, confidence=None,
-                                provenance=None, author=None, binary=None):
+                                provenance=None, author=None, binary=None, **_kw):
             if symbol_id == "sym:ACCT-FIELD-0":
                 raise _VOCAB.we.WickedEstateError("ambiguous name")
             self._calls.append({"sid": symbol_id, "key": key, "value": value})
@@ -455,7 +455,7 @@ class TestProject(unittest.TestCase):
         # Engine refuses EVERY bind -> ACCT grounds but binds 0 (all_skipped);
         # ZZZNOPE never grounds at all (unbound).
         def _fake_all_refuse(db, symbol_id, key, value, *, confidence=None,
-                             provenance=None, author=None, binary=None):
+                             provenance=None, author=None, binary=None, **_kw):
             raise _VOCAB.we.WickedEstateError("ambiguous name")
 
         _VOCAB.we.annotate_kv = _fake_all_refuse

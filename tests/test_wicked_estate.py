@@ -788,6 +788,21 @@ class TestTypedAnnotationsRealBinary(unittest.TestCase):
         nodes = we.nodes_annotated_with(self.db, "domain_entity", "PRODUCER")
         self.assertTrue(nodes, "--annotated-with KEY=VALUE must still resolve")
 
+    @unittest.skipIf(BINARY is None or not we._annotate_supports_replace(),
+                     "engine lacks annotate --replace (< 0.5.1)")
+    def test_annotate_kv_replace_is_idempotent(self):
+        # The re-projectable cache path: annotate_kv(replace=True) UPSERTs by
+        # (type,key), so re-projecting a domain_* tag never duplicates it.
+        sid = we.resolve_symbol_id(self.db, "Consumer")
+        if not sid:
+            self.skipTest("no unambiguous Consumer symbol")
+        for _ in range(3):
+            we.annotate_kv(self.db, sid[0], "domain_entity", "CONSUMER",
+                           type="note", replace=True, binary=BINARY)
+        got = [a for a in we.annotations(self.db, "Consumer", type="note")
+               if a.get("key") == "domain_entity"]
+        self.assertEqual(len(got), 1, "replace must upsert, not append")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -1185,6 +1186,34 @@ def _parse_annotations_show(stdout: str) -> list:
     return out
 
 
+_ANNOTATE_REPLACE_CACHE: dict = {}
+
+
+def _annotate_supports_replace(binary: str | None = None) -> bool:
+    """True iff the engine supports `annotate --replace` (idempotent upsert) —
+    wicked-estate >= 0.5.1. Detected from the `--version` banner (the flag is not
+    listed in `annotate --help`), cached per binary. Older engines return False so
+    callers degrade to append."""
+    try:
+        bin_path = binary or resolve_binary()
+    except WickedEstateError:
+        return False
+    if bin_path in _ANNOTATE_REPLACE_CACHE:
+        return _ANNOTATE_REPLACE_CACHE[bin_path]
+    ok = False
+    try:
+        r = subprocess.run([bin_path, "--version"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           text=True, timeout=30)
+        m = re.search(r"(\d+)\.(\d+)\.(\d+)", (r.stdout or "") + (r.stderr or ""))
+        if m:
+            ok = tuple(int(g) for g in m.groups()) >= (0, 5, 1)
+    except (subprocess.TimeoutExpired, OSError):
+        ok = False
+    _ANNOTATE_REPLACE_CACHE[bin_path] = ok
+    return ok
+
+
 def annotate_kv(
     db: str,
     symbol_id: str,
@@ -1194,10 +1223,20 @@ def annotate_kv(
     confidence: float | None = None,
     provenance: str | None = None,
     author: str | None = None,
+    type: str | None = None,
+    replace: bool = False,
     binary: str | None = None,
 ) -> dict:
     """ADJUNCT (richer surface): write ONE native multi-key annotation
-    (key/value [+ confidence/provenance/author]) via native `annotate`.
+    (key/value [+ confidence/provenance/author/type]) via native `annotate`.
+
+    `replace=True` (wicked-estate >= 0.5.1) makes the write an idempotent UPSERT by
+    (type, key) for this symbol — the right mode for the re-projectable CACHE tags
+    (domain_*), so re-projecting onto a live graph REPLACES the row instead of
+    appending a duplicate. Feature-detected: silently dropped on engines without
+    `--replace` (which fall back to append — harmless because the term/value is
+    identical and the read path dedups by node). `type` defaults to the engine's
+    `note`.
 
     PRECISION-GUARDED: `symbol_id` MUST be a resolved full SymbolId. We confirm it
     resolves to EXACTLY ONE node (by querying the node's name back) and only then call
@@ -1231,12 +1270,18 @@ def annotate_kv(
             "precision. Use the SymbolId-precise annotate() for requirements."
         )
     args = ["annotate", name, "--key", key, "--value", value]
+    if type is not None:
+        args += ["--type", type]
     if confidence is not None:
         args += ["--confidence", str(confidence)]
     if provenance is not None:
         args += ["--provenance", provenance]
     if author is not None:
         args += ["--author", author]
+    # `--replace` (idempotent upsert) is feature-detected: only pass it when the
+    # engine's `annotate` advertises it, so older engines don't choke on the flag.
+    if replace and _annotate_supports_replace(binary=binary):
+        args.append("--replace")
     args += _db_args(db)
     _run(args, timeout=DEFAULT_TIMEOUTS["semantics"], binary=binary)
     return {

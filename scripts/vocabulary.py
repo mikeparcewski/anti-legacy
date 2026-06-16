@@ -744,9 +744,13 @@ def project_terms_to_graph(db, vocab_path=DEFAULT_OUT, *, config=None,
         for s in cand["_sources"]:
             sid = s.get("ref")
             try:
+                # replace=True: the domain_* tags are a re-projectable CACHE, so a
+                # re-project (after a term change, without a full re-survey) must
+                # UPSERT by (type,key) — not append a duplicate (wicked-estate
+                # >= 0.5.1; feature-detected, degrades to append on older engines).
                 we.annotate_kv(db, sid, key, canon, confidence=conf,
                                provenance="vocabulary:confirmed", author=author,
-                               binary=binary)
+                               replace=True, binary=binary)
                 projected += 1
                 term_bound += 1
             except we.WickedEstateError:
