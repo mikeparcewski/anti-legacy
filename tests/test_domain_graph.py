@@ -1919,6 +1919,14 @@ class TestPackagePrimaryPartition(unittest.TestCase):
         parts = dg._capability_partition(app, 500)
         self.assertEqual(len(parts), 3)  # degraded to package partition
 
+    def test_community_mode_falls_back_without_labels(self):
+        # "community" reads persisted type:community annotations; with no engine DB
+        # (no labels) it degrades to the language-driven default, never crashes.
+        app = _partition_app("java", self._files_two_packages(),
+                             strategy="community")  # no 'db' key
+        parts = dg._capability_partition(app, 500)
+        self.assertEqual(len(parts), 3)  # degraded to package partition
+
 
 # ===========================================================================
 # PHASE 1+2 INTEGRATION — cross-app capability coalescing. Two modern apps that

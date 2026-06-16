@@ -732,6 +732,28 @@ def _capability_partition(app, max_members):
                 for label, members in communities.items()
                 if any(m in behavior_ids for m in members)}
 
+    # "community": consume the PERSISTED type:community annotations the engine
+    # wrote at survey time (`clusters --annotate`, author=system) — the survey's
+    # capability partition, co-located on the nodes, with no re-clustering here.
+    # Graceful: empty (no community tags / older engine) → degrade to auto.
+    if strategy == "community":
+        labels = {}
+        if app.get("db"):
+            try:
+                labels = we.community_labels(app["db"])
+            except we.WickedEstateError:
+                labels = {}
+        if labels:
+            groups: dict = {}
+            for sid in behavior_ids:
+                lab = labels.get(sid)
+                if lab is not None:
+                    groups.setdefault("comm:%s" % lab, []).append(sid)
+            if groups:
+                return groups
+        # No labels (no DB / older engine / clusters --annotate not run) → degrade.
+        strategy = "auto"
+
     # Newer-engine clustering modes (opt-in). Each tries the engine; if it is
     # unavailable (older engine / no DB / can't read it / no embeddings) it returns
     # None and we fall through to the language-driven default — never a hard fail.

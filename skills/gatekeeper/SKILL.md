@@ -164,6 +164,15 @@ the gate status is not `passed` → halt: `GATE_1B_SEMANTIC_JOIN: BLOCKED — {r
 
 ### For GATE_1_DESIGN
 
+> **Advisory review queue (wicked-estate ≥ 0.5.0).** Before signing, the reviewer
+> should clear the open `question`/`assumption` annotations the extraction/translation
+> agents left — they are the human work-list. Read them per app DB with
+> `python3 .anti-legacy/run.py wicked_estate advisory-nodes --db .anti-legacy/graphs/<app>.db`
+> (or `wicked_estate.advisory_nodes(db)` in-process), which returns every node carrying
+> an advisory annotation (gated on the engine-computed `advisory` flag, not the type).
+> Unresolved `question`s on a capability are a natural reason to record `failed` and
+> kick back. Graceful no-op on older engines.
+
 1. Read manifest — verify `gates.GATE_1_DESIGN.status == "passed"`:
    ```bash
    python3 -c "import json,sys; m=json.load(open('.anti-legacy/manifest.json')); g=m['gates']['GATE_1_DESIGN']; sys.exit(0 if g['status']=='passed' else 1)"

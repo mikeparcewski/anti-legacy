@@ -1297,6 +1297,120 @@ def nodes_annotated_with(db: str, key: str, value: str | None = None,
     return data if isinstance(data, list) else []
 
 
+def annotations(db: str, name: str, *, type: str = None,
+                binary: str | None = None) -> list:
+    """Read TYPED annotations (wicked-estate >= 0.5.0) for the symbol(s) matching
+    `name`, via `annotations <name> [--type T] --json`. Returns a FLAT list of
+    annotation dicts, each carrying its owning `symbol` plus the record fields
+    {type, key, value, confidence, provenance, author, ts, advisory}. The
+    `advisory` flag is engine-COMPUTED (question/assumption -> True) — gate on it,
+    not on the type string. Empty list when the symbol has none OR the engine
+    predates typed annotations (graceful — never raises)."""
+    args = ["annotations", name]
+    if type:
+        args += ["--type", type]
+    args.append("--json")
+    try:
+        raw = _native_json(args + _db_args(db),
+                           timeout=DEFAULT_TIMEOUTS["query"], binary=binary)
+    except WickedEstateError:
+        return []
+    out = []
+    for entry in (raw or []):
+        if not isinstance(entry, dict):
+            continue
+        sym = entry.get("symbol")
+        for a in entry.get("annotations", []) or []:
+            if isinstance(a, dict):
+                out.append({"symbol": sym, **a})
+    return out
+
+
+def node_annotations(db: str, *, kind: str = None,
+                     binary: str | None = None) -> dict:
+    """BULK READ of the inline annotation rollup `nodes --json` carries on every
+    entity (wicked-estate >= 0.5.0): returns {symbol_id -> {"summary":
+    {count, by_type, has_advisory}, "annotations": [...]}}. `summary.count` is the
+    TRUE total even though `annotations` is payload-capped (20/entity), so a
+    consumer knows when to fall back to the uncapped `annotations()` per symbol.
+
+    This is the cheap triage seam — e.g. `type:community` cluster labels co-located
+    on nodes, or `has_advisory` (open questions/assumptions) for the gate review —
+    in ONE call instead of per-symbol. Empty when the engine predates typed
+    annotations (graceful)."""
+    if not _probe_native_subcommand("nodes", binary=binary):
+        return {}
+    args = ["nodes"]
+    if kind:
+        args += ["--kind", kind]
+    args.append("--json")
+    try:
+        out = _run(args + _db_args(db), timeout=DEFAULT_TIMEOUTS["query"], binary=binary)
+        data = json.loads(out)
+    except (WickedEstateError, ValueError, TypeError):
+        return {}
+    if isinstance(data, dict):
+        data = data.get("nodes", [])
+    index = {}
+    for n in data if isinstance(data, list) else []:
+        sid = n.get("symbol_id")
+        if sid and ("annotation_summary" in n or "annotations" in n):
+            index[sid] = {
+                "summary": n.get("annotation_summary") or {},
+                "annotations": n.get("annotations") or [],
+            }
+    return index
+
+
+def community_labels(db: str, binary: str | None = None) -> dict:
+    """Co-located cluster labels: {symbol_id -> community_label} read from the
+    persisted `type:community` annotations (`clusters --annotate` writes them,
+    author=system). Lets a consumer use the SURVEY-TIME partition without re-running
+    clustering. Empty when none are present (graceful — run `clusters --annotate`
+    first, or fall back to cluster())."""
+    out = {}
+    for sid, rec in node_annotations(db, binary=binary).items():
+        for a in rec.get("annotations", []):
+            if a.get("type") == "community":
+                out[sid] = a.get("value")
+                break
+    return out
+
+
+def advisory_nodes(db: str, binary: str | None = None) -> list:
+    """The GATE-REVIEW triage seam: every node carrying an ADVISORY annotation
+    (question / assumption — the agent's open unknowns + acted-on beliefs), as
+    [{symbol_id, name, file, advisory: [{type, key, value, ...}]}], so a gate
+    reviewer can see the human-review work-list per node in one call. Gate on the
+    engine-computed `advisory` flag, not the type string. Empty when none / older
+    engine (graceful)."""
+    # Need names/files alongside the advisory flag — node_annotations is keyed by
+    # symbol_id but the inline payload also carries name/kind, so re-read once.
+    if not _probe_native_subcommand("nodes", binary=binary):
+        return []
+    try:
+        out = _run(["nodes", "--json"] + _db_args(db),
+                   timeout=DEFAULT_TIMEOUTS["query"], binary=binary)
+        data = json.loads(out)
+    except (WickedEstateError, ValueError, TypeError):
+        return []
+    if isinstance(data, dict):
+        data = data.get("nodes", [])
+    rows = []
+    for n in data if isinstance(data, list) else []:
+        if not (n.get("annotation_summary") or {}).get("has_advisory"):
+            continue
+        adv = [a for a in (n.get("annotations") or []) if a.get("advisory")]
+        if adv:
+            rows.append({
+                "symbol_id": n.get("symbol_id"),
+                "name": n.get("name"),
+                "file": n.get("file"),
+                "advisory": adv,
+            })
+    return rows
+
+
 def _name_for_symbol_id(db: str, symbol_id: str):
     """Reverse the interned SymbolId -> node name (read-only intern-table exception,
     the same `file:{abspath}?mode=ro` URI list_nodes/resolve_symbol_id use). Returns
@@ -3007,6 +3121,13 @@ def main(argv=None) -> int:
     p = sub.add_parser("semantic", help="native free-text embedding search", parents=[db_parent])
     p.add_argument("query")
 
+    sub.add_parser("advisory-nodes",
+                   help="nodes carrying advisory (question/assumption) annotations — the gate review queue",
+                   parents=[db_parent])
+    sub.add_parser("community-labels",
+                   help="symbol_id -> persisted type:community label (clusters --annotate)",
+                   parents=[db_parent])
+
     args = parser.parse_args(argv)
 
     try:
@@ -3034,6 +3155,10 @@ def main(argv=None) -> int:
             _print_json(resolve_symbol_id(args.db, args.name, file=args.file, kind=args.kind))
         elif args.cmd == "list-nodes":
             _print_json(list_nodes(args.db, kinds=args.kinds))
+        elif args.cmd == "advisory-nodes":
+            _print_json(advisory_nodes(getattr(args, "db", DEFAULT_DB)))
+        elif args.cmd == "community-labels":
+            _print_json(community_labels(getattr(args, "db", DEFAULT_DB)))
         elif args.cmd == "annotate":
             _rule_obj = json.loads(args.rule_object) if args.rule_object else None
             _print_json(

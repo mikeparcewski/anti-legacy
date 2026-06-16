@@ -80,6 +80,30 @@ selectors and a `max_total_chars` budget; on truncation a node keeps its metadat
 (`source: null` + `byte_range`/`blob_sha`) so you fetch the remainder with
 `fetch_source_range(file, byte_range)` — a node is never dropped, only its body.
 
+**Typed annotations — record your reasoning (wicked-estate ≥ 0.5.0).** The business
+rule always goes to the `requirement` field (RESOLVED / RISK). Use typed annotations
+(`wicked-estate annotate <name|--symbol id> --type <t> --key K --value V`) for the
+reasoning *around* it — what you noticed, believed, or couldn't resolve. The
+convention:
+
+- **`observation`** (informational) — a structural/factual thing you noticed that is
+  not a rule and not uncertain. *"EXEC PGM=CALCRATE references a program with no
+  source in the tree"; "unreferenced paragraph"; "COMP-3 field, precision-sensitive."*
+- **`assumption`** (advisory) — a belief you **acted on** and that should be verified.
+  *"assumed this branch is never run and excluded it"; "assumed these two source
+  rules are the same capability."* Use when you proceeded on an inference (it lowers
+  trust).
+- **`question`** (advisory) — an unknown you **couldn't resolve** and that needs a
+  human or another source. *"is this COMP-3 field a monetary amount? affects parity
+  rules"; "the two merged sources disagree on the retry rule — which wins?"* Use when
+  you're blocked/unsure (an open item).
+
+Pair every RISK-flagged rule with a `question` or `assumption` saying *why* it is on
+the HITL queue. The `advisory:true` flag is engine-computed (gate on it, not the type
+string); the gate review reads it via `wicked_estate.advisory_nodes(db)` as the
+human work-list. (Cache-class key/value tags like `domain_*` re-project idempotently
+with `annotate --replace` on ≥ 0.5.1; advisory annotations stay append-only.)
+
 ## Config
 
 ```bash

@@ -79,6 +79,7 @@ Extraction groups behavior-bearing nodes into capabilities before naming them. `
 - `package` — force source-package grouping.
 - `hierarchical` — engine Louvain community detection that splits dense mega-communities. Opt-in; use it when `auto` produces a few giant capabilities you want broken up.
 - `semantic` — engine embedding clustering; groups by meaning rather than structure. Opt-in; needs the index built with `--embeddings` (see survey). Use it for cross-app consolidation where structurally distant code is the same capability.
+- `community` — reuse the survey-time partition the engine persisted as `type:community` annotations (`clusters --annotate`, wicked-estate >= 0.5.0). Use it to consume one fixed partition across the run instead of re-clustering at translate time. Falls back to `auto` when no community labels are present.
 
 `hierarchical` and `semantic` require **wicked-estate >= 0.4.0** — they are feature-detected and fall back gracefully (no-op, with a notice) on older engines, so the base pipeline still runs on 0.1.x. EXPERIMENTAL: the opt-in modes are newer than the `auto` path.
 

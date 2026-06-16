@@ -1802,7 +1802,7 @@
     "ConfigureDeliveryCapability": {
       "entities": {},
       "requirements": {
-        "REQ_CAP_3109FD3B7DE8": {
+        "REQ_CAP_9107DA333DDD": {
           "business_rules": [
             {
               "confidence": 0.97,
@@ -1904,8 +1904,19 @@
               "statement": "Builds the background Sender: resolves max in-flight requests, request timeout, acks, and retries from config, creates or reuses the network client, and wires throttle metrics and the TransactionManager."
             },
             {
-              "confidence": 0.98,
+              "confidence": 0.97,
               "id": "RULE-010",
+              "provenance": {
+                "program": "partition",
+                "ref": "ring[0]",
+                "source_app": "apache-kafka"
+              },
+              "source_ref": "ts-java . . . KafkaProducer/partition().",
+              "statement": "Computes the target partition for a record: uses the record's explicit partition if set, else a configured custom partitioner (rejecting negative results), else hashes the serialized key, else returns UNKNOWN_PARTITION to defer to built-in partitioning."
+            },
+            {
+              "confidence": 0.98,
+              "id": "RULE-011",
               "provenance": {
                 "program": "appendSerializerToConfig",
                 "ref": "ring[0]",
@@ -1913,11 +1924,33 @@
               },
               "source_ref": "ts-java . . . ProducerConfig/appendSerializerToConfig().",
               "statement": "Returns a config copy with key/value serializer classes injected from passed instances; if an instance is null and no serializer is already configured, throws ConfigException requiring it be non-null."
+            },
+            {
+              "confidence": 0.98,
+              "id": "RULE-012",
+              "provenance": {
+                "program": "key",
+                "ref": "ring[0]",
+                "source_app": "apache-kafka"
+              },
+              "source_ref": "ts-java . . . ProducerRecord/key().",
+              "statement": "Returns the optional record key used for partition selection via hashing, or null if no key was specified."
+            },
+            {
+              "confidence": 0.98,
+              "id": "RULE-013",
+              "provenance": {
+                "program": "value",
+                "ref": "ring[0]",
+                "source_app": "apache-kafka"
+              },
+              "source_ref": "ts-java . . . ProducerRecord/value().",
+              "statement": "Returns the record's payload contents, which may be null."
             }
           ],
           "data_access": [],
           "dependencies": [],
-          "description": "Target capability covering KafkaProducer, appendSerializerToConfig, clientInstanceId, close, configureCompression, configureDeliveryTimeout, configureTransactionState, get, lingerMs, newSender (intent: Constructs the producer from configs/Properties (+ optional key/value serializers): builds metrics, serializers, interceptors, metadata, accumulator, and Sender). Derived from 10 legacy component(s) in app 'apache-kafka'.",
+          "description": "Target capability covering KafkaProducer, appendSerializerToConfig, clientInstanceId, close, configureCompression, configureDeliveryTimeout, configureTransactionState, get, key, lingerMs, newSender, partition, value (intent: Constructs the producer from configs/Properties (+ optional key/value serializers): builds metrics, serializers, interceptors, metadata, accumulator, and Sender). Derived from 13 legacy component(s) in app 'apache-kafka'.",
           "disposition": "keep",
           "disposition_reason": "behavior preserved from apache-kafka",
           "error_paths": [],
@@ -1931,7 +1964,10 @@
             "ts-java . . . KafkaProducer/get().",
             "ts-java . . . KafkaProducer/lingerMs().",
             "ts-java . . . KafkaProducer/newSender().",
-            "ts-java . . . ProducerConfig/appendSerializerToConfig()."
+            "ts-java . . . KafkaProducer/partition().",
+            "ts-java . . . ProducerConfig/appendSerializerToConfig().",
+            "ts-java . . . ProducerRecord/key().",
+            "ts-java . . . ProducerRecord/value()."
           ],
           "merged_programs": [
             "KafkaProducer",
@@ -1942,8 +1978,11 @@
             "configureDeliveryTimeout",
             "configureTransactionState",
             "get",
+            "key",
             "lingerMs",
-            "newSender"
+            "newSender",
+            "partition",
+            "value"
           ],
           "provenance": "apache-kafka",
           "status": "active",
@@ -3340,6 +3379,37 @@
           "title": "Message",
           "validations": []
         },
+        "REQ_CAP_2A26CE4A0E4F": {
+          "business_rules": [
+            {
+              "confidence": 0.95,
+              "id": "RULE-001",
+              "provenance": {
+                "program": "MessageRoutingMode",
+                "ref": "ring[0]",
+                "source_app": "apache-pulsar"
+              },
+              "source_ref": "ts-java . . . MessageRoutingMode/MessageRoutingMode#",
+              "statement": "Public stable enum defining a partitioned producer's default key-less partition routing policy, with SinglePartition, RoundRobinPartition, and CustomPartition modes; applies only when a message has no key (keyed messages always hash the key to a partition)."
+            }
+          ],
+          "data_access": [],
+          "dependencies": [],
+          "description": "Target capability covering MessageRoutingMode (intent: Public stable enum defining a partitioned producer's default key-less partition routing policy, with SinglePartition, RoundRobinPartition, and CustomPartition m). Derived from 1 legacy component(s) in app 'apache-pulsar'.",
+          "disposition": "keep",
+          "disposition_reason": "behavior preserved from apache-pulsar",
+          "error_paths": [],
+          "legacy_components": [
+            "ts-java . . . MessageRoutingMode/MessageRoutingMode#"
+          ],
+          "merged_programs": [
+            "MessageRoutingMode"
+          ],
+          "provenance": "apache-pulsar",
+          "status": "active",
+          "title": "Message",
+          "validations": []
+        },
         "REQ_CAP_2DA7EBD2C924": {
           "business_rules": [
             {
@@ -3673,37 +3743,6 @@
     "ModeCapability": {
       "entities": {},
       "requirements": {
-        "REQ_CAP_2A26CE4A0E4F": {
-          "business_rules": [
-            {
-              "confidence": 0.95,
-              "id": "RULE-001",
-              "provenance": {
-                "program": "MessageRoutingMode",
-                "ref": "ring[0]",
-                "source_app": "apache-pulsar"
-              },
-              "source_ref": "ts-java . . . MessageRoutingMode/MessageRoutingMode#",
-              "statement": "Public stable enum defining a partitioned producer's default key-less partition routing policy, with SinglePartition, RoundRobinPartition, and CustomPartition modes; applies only when a message has no key (keyed messages always hash the key to a partition)."
-            }
-          ],
-          "data_access": [],
-          "dependencies": [],
-          "description": "Target capability covering MessageRoutingMode (intent: Public stable enum defining a partitioned producer's default key-less partition routing policy, with SinglePartition, RoundRobinPartition, and CustomPartition m). Derived from 1 legacy component(s) in app 'apache-pulsar'.",
-          "disposition": "keep",
-          "disposition_reason": "behavior preserved from apache-pulsar",
-          "error_paths": [],
-          "legacy_components": [
-            "ts-java . . . MessageRoutingMode/MessageRoutingMode#"
-          ],
-          "merged_programs": [
-            "MessageRoutingMode"
-          ],
-          "provenance": "apache-pulsar",
-          "status": "active",
-          "title": "Mode",
-          "validations": []
-        },
         "REQ_CAP_2E7EF5E4CBDC": {
           "business_rules": [
             {
@@ -4124,6 +4163,75 @@
           "provenance": "apache-kafka",
           "status": "review",
           "title": "Partitions",
+          "validations": []
+        }
+      }
+    },
+    "PartitionsMessageCapability": {
+      "entities": {},
+      "requirements": {
+        "REQ_CAP_C40036939A6D": {
+          "business_rules": [
+            {
+              "confidence": 0.96,
+              "id": "RULE-001",
+              "provenance": {
+                "program": "getErrorMessage",
+                "ref": "ring[0]",
+                "source_app": "apache-kafka"
+              },
+              "source_ref": "ts-java . . . KafkaProducer/getErrorMessage().",
+              "statement": "Formats the metadata-timeout error string: reports the topic as not present when partition count is unknown, otherwise reports the specific partition as missing, including the elapsed maxWaitMs."
+            },
+            {
+              "confidence": 0.97,
+              "id": "RULE-002",
+              "provenance": {
+                "program": "partitionsFor",
+                "ref": "ring[0]",
+                "source_app": "apache-kafka"
+              },
+              "source_ref": "ts-java . . . KafkaProducer/partitionsFor().",
+              "statement": "Returns the partition metadata (PartitionInfo list) for a topic, refreshing metadata until the topic is found or max.block.ms expires; rejects a null topic and throws TimeoutException if not found in time."
+            },
+            {
+              "confidence": 0.96,
+              "id": "RULE-003",
+              "provenance": {
+                "program": "waitOnMetadata",
+                "ref": "ring[0]",
+                "source_app": "apache-kafka"
+              },
+              "source_ref": "ts-java . . . KafkaProducer/waitOnMetadata().",
+              "statement": "Blocks until cluster metadata for the topic (and optional specific partition) is available, issuing repeated metadata refresh requests up to maxWaitMs; rejects invalid topics, throws TimeoutException on expiry, and returns the cluster plus elapsed wait time."
+            }
+          ],
+          "data_access": [],
+          "dependencies": [],
+          "description": "Target capability covering getErrorMessage, partitionsFor, waitOnMetadata (intent: Formats the metadata-timeout error string: reports the topic as not present when partition count is unknown, otherwise reports the specific partition as missing). Derived from 3 legacy component(s) in app 'apache-kafka'.",
+          "disposition": "keep",
+          "disposition_reason": "behavior preserved from apache-kafka",
+          "error_paths": [],
+          "legacy_components": [
+            "ts-java . . . KafkaProducer/getErrorMessage().",
+            "ts-java . . . KafkaProducer/partitionsFor().",
+            "ts-java . . . KafkaProducer/waitOnMetadata()."
+          ],
+          "merged_programs": [
+            "getErrorMessage",
+            "partitionsFor",
+            "waitOnMetadata"
+          ],
+          "parity_hints": [
+            {
+              "field": "count",
+              "kind": "count",
+              "precision": 0
+            }
+          ],
+          "provenance": "apache-kafka",
+          "status": "active",
+          "title": "PartitionsMessage",
           "validations": []
         }
       }
@@ -5209,10 +5317,10 @@
         }
       }
     },
-    "SendMessageCapability": {
+    "SendRecordCapability": {
       "entities": {},
       "requirements": {
-        "REQ_CAP_4C99A9CCD00F": {
+        "REQ_CAP_B6A925B1055C": {
           "business_rules": [
             {
               "confidence": 0.97,
@@ -5259,19 +5367,8 @@
               "statement": "Throws RecordTooLargeException if the serialized record size exceeds max.request.size, or exceeds the total buffer.memory, preventing oversized records from being buffered."
             },
             {
-              "confidence": 0.96,
-              "id": "RULE-005",
-              "provenance": {
-                "program": "getErrorMessage",
-                "ref": "ring[0]",
-                "source_app": "apache-kafka"
-              },
-              "source_ref": "ts-java . . . KafkaProducer/getErrorMessage().",
-              "statement": "Formats the metadata-timeout error string: reports the topic as not present when partition count is unknown, otherwise reports the specific partition as missing, including the elapsed maxWaitMs."
-            },
-            {
               "confidence": 0.97,
-              "id": "RULE-006",
+              "id": "RULE-005",
               "provenance": {
                 "program": "getPartition",
                 "ref": "ring[0]",
@@ -5282,7 +5379,7 @@
             },
             {
               "confidence": 0.97,
-              "id": "RULE-007",
+              "id": "RULE-006",
               "provenance": {
                 "program": "onCompletion",
                 "ref": "ring[0]",
@@ -5293,29 +5390,7 @@
             },
             {
               "confidence": 0.97,
-              "id": "RULE-008",
-              "provenance": {
-                "program": "partition",
-                "ref": "ring[0]",
-                "source_app": "apache-kafka"
-              },
-              "source_ref": "ts-java . . . KafkaProducer/partition().",
-              "statement": "Computes the target partition for a record: uses the record's explicit partition if set, else a configured custom partitioner (rejecting negative results), else hashes the serialized key, else returns UNKNOWN_PARTITION to defer to built-in partitioning."
-            },
-            {
-              "confidence": 0.97,
-              "id": "RULE-009",
-              "provenance": {
-                "program": "partitionsFor",
-                "ref": "ring[0]",
-                "source_app": "apache-kafka"
-              },
-              "source_ref": "ts-java . . . KafkaProducer/partitionsFor().",
-              "statement": "Returns the partition metadata (PartitionInfo list) for a topic, refreshing metadata until the topic is found or max.block.ms expires; rejects a null topic and throws TimeoutException if not found in time."
-            },
-            {
-              "confidence": 0.97,
-              "id": "RULE-010",
+              "id": "RULE-007",
               "provenance": {
                 "program": "send",
                 "ref": "ring[0]",
@@ -5326,7 +5401,7 @@
             },
             {
               "confidence": 0.96,
-              "id": "RULE-011",
+              "id": "RULE-008",
               "provenance": {
                 "program": "setReadOnly",
                 "ref": "ring[0]",
@@ -5337,7 +5412,7 @@
             },
             {
               "confidence": 0.96,
-              "id": "RULE-012",
+              "id": "RULE-009",
               "provenance": {
                 "program": "topicPartition",
                 "ref": "ring[0]",
@@ -5347,19 +5422,8 @@
               "statement": "Lazily builds and caches the TopicPartition from the topic and the resolved partition, preferring the assigned partition, then the record's requested partition, else UNKNOWN_PARTITION; null when topic is null."
             },
             {
-              "confidence": 0.96,
-              "id": "RULE-013",
-              "provenance": {
-                "program": "waitOnMetadata",
-                "ref": "ring[0]",
-                "source_app": "apache-kafka"
-              },
-              "source_ref": "ts-java . . . KafkaProducer/waitOnMetadata().",
-              "statement": "Blocks until cluster metadata for the topic (and optional specific partition) is available, issuing repeated metadata refresh requests up to maxWaitMs; rejects invalid topics, throws TimeoutException on expiry, and returns the cluster plus elapsed wait time."
-            },
-            {
               "confidence": 0.95,
-              "id": "RULE-014",
+              "id": "RULE-010",
               "provenance": {
                 "program": "send",
                 "ref": "ring[0]",
@@ -5370,7 +5434,7 @@
             },
             {
               "confidence": 0.96,
-              "id": "RULE-015",
+              "id": "RULE-011",
               "provenance": {
                 "program": "onAcknowledgement",
                 "ref": "ring[0]",
@@ -5381,7 +5445,7 @@
             },
             {
               "confidence": 0.97,
-              "id": "RULE-016",
+              "id": "RULE-012",
               "provenance": {
                 "program": "onSend",
                 "ref": "ring[0]",
@@ -5392,7 +5456,7 @@
             },
             {
               "confidence": 0.97,
-              "id": "RULE-017",
+              "id": "RULE-013",
               "provenance": {
                 "program": "headers",
                 "ref": "ring[0]",
@@ -5400,36 +5464,15 @@
               },
               "source_ref": "ts-java . . . ProducerRecord/headers().",
               "statement": "Returns the record's Headers collection (a RecordHeaders built from the supplied Iterable, empty if none were provided), never null."
-            },
-            {
-              "confidence": 0.98,
-              "id": "RULE-018",
-              "provenance": {
-                "program": "key",
-                "ref": "ring[0]",
-                "source_app": "apache-kafka"
-              },
-              "source_ref": "ts-java . . . ProducerRecord/key().",
-              "statement": "Returns the optional record key used for partition selection via hashing, or null if no key was specified."
-            },
-            {
-              "confidence": 0.98,
-              "id": "RULE-019",
-              "provenance": {
-                "program": "value",
-                "ref": "ring[0]",
-                "source_app": "apache-kafka"
-              },
-              "source_ref": "ts-java . . . ProducerRecord/value().",
-              "statement": "Returns the record's payload contents, which may be null."
             }
           ],
           "data_access": [],
           "dependencies": [
-            "REQ_CAP_3109FD3B7DE8",
+            "REQ_CAP_9107DA333DDD",
+            "REQ_CAP_C40036939A6D",
             "REQ_CAP_E76FB0C5201D"
           ],
-          "description": "Target capability covering AppendCallbacks, doSend, ensureValidRecordSize, getErrorMessage, getPartition, headers, key, onAcknowledgement, onCompletion, onCompletion, onSend, partition, partitionsFor, send, send, setReadOnly, topicPartition, value, waitOnMetadata (intent: Invoked when the sent record is acknowledged: delivers RecordMetadata (partition/offset) on success, or a non-null Exception plus metadata with -1 in all fields). Derived from 19 legacy component(s) in app 'apache-kafka'.",
+          "description": "Target capability covering AppendCallbacks, doSend, ensureValidRecordSize, getPartition, headers, onAcknowledgement, onCompletion, onCompletion, onSend, send, send, setReadOnly, topicPartition (intent: Invoked when the sent record is acknowledged: delivers RecordMetadata (partition/offset) on success, or a non-null Exception plus metadata with -1 in all fields). Derived from 13 legacy component(s) in app 'apache-kafka'.",
           "disposition": "keep",
           "disposition_reason": "behavior preserved from apache-kafka",
           "error_paths": [],
@@ -5438,58 +5481,41 @@
             "ts-java . . . KafkaProducer/AppendCallbacks().",
             "ts-java . . . KafkaProducer/doSend().",
             "ts-java . . . KafkaProducer/ensureValidRecordSize().",
-            "ts-java . . . KafkaProducer/getErrorMessage().",
             "ts-java . . . KafkaProducer/getPartition().",
             "ts-java . . . KafkaProducer/onCompletion().",
-            "ts-java . . . KafkaProducer/partition().",
-            "ts-java . . . KafkaProducer/partitionsFor().",
             "ts-java . . . KafkaProducer/send().",
             "ts-java . . . KafkaProducer/setReadOnly().",
             "ts-java . . . KafkaProducer/topicPartition().",
-            "ts-java . . . KafkaProducer/waitOnMetadata().",
             "ts-java . . . Producer/send().",
             "ts-java . . . ProducerInterceptor/onAcknowledgement().",
             "ts-java . . . ProducerInterceptor/onSend().",
-            "ts-java . . . ProducerRecord/headers().",
-            "ts-java . . . ProducerRecord/key().",
-            "ts-java . . . ProducerRecord/value()."
+            "ts-java . . . ProducerRecord/headers()."
           ],
           "merged_programs": [
             "AppendCallbacks",
             "doSend",
             "ensureValidRecordSize",
-            "getErrorMessage",
             "getPartition",
             "headers",
-            "key",
             "onAcknowledgement",
             "onCompletion",
             "onCompletion",
             "onSend",
-            "partition",
-            "partitionsFor",
             "send",
             "send",
             "setReadOnly",
-            "topicPartition",
-            "value",
-            "waitOnMetadata"
+            "topicPartition"
           ],
           "parity_hints": [
             {
               "field": "total",
               "kind": "money",
               "precision": 2
-            },
-            {
-              "field": "count",
-              "kind": "count",
-              "precision": 0
             }
           ],
           "provenance": "apache-kafka",
           "status": "active",
-          "title": "SendMessage",
+          "title": "SendRecord",
           "validations": []
         }
       }

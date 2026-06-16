@@ -94,7 +94,9 @@ The survey phase runs **wicked-estate index** once over each source repo — one
 
 There is no separate "modern" survey track: modern languages are indexed by the same `anti-legacy:survey` pass as the mainframe estate. (`anti-legacy:survey-modern` is retired — a do-nothing redirect stub kept only so stale references resolve.)
 
-**Capability partition** (`config.coverage.capability_partition`): `auto` (default — language-driven: mainframe → call-affinity, modern → source-package), `calls`, `package`, `hierarchical`, or `semantic`. The `hierarchical` (Louvain community splitting) and `semantic` (embedding clustering) modes are opt-in, feature-detected, and require **wicked-estate ≥ 0.4.0** — they fall back gracefully on older engines, and mainframe behaviour is unchanged on `auto`. The base pipeline runs on older engines; the new clustering and bulk-source capabilities need 0.4.0+.
+**Capability partition** (`config.coverage.capability_partition`): `auto` (default — language-driven: mainframe → call-affinity, modern → source-package), `calls`, `package`, `hierarchical`, `semantic`, or `community`. The `hierarchical` (Louvain community splitting) and `semantic` (embedding clustering) modes are opt-in, feature-detected, and require **wicked-estate ≥ 0.4.0**; `community` reuses the survey-time partition the engine persisted as `type:community` annotations (≥ 0.5.0). All fall back gracefully on older engines, and mainframe behaviour is unchanged on `auto`. The base pipeline runs on older engines; the clustering/bulk-source/typed-annotation capabilities need 0.4.0+ (typed annotations 0.5.0+).
+
+**Typed annotations** (wicked-estate ≥ 0.5.0): agents record their reasoning *around* a rule as `observation` (a noticed fact), `assumption` (a belief acted on — verify), or `question` (an unresolved unknown — needs a human). The rule itself always stays in the `requirement` field; advisory annotations (`assumption`/`question`) become the gate-review work-list (`advisory-nodes`). Read-only consumption is additive and falls back cleanly on older engines.
 
 ---
 

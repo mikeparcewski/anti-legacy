@@ -699,5 +699,95 @@ class TestSourceBundleFallback(unittest.TestCase):
         self.assertEqual(len(c["file_source"]), 5)
 
 
+# ===========================================================================
+# Typed annotations read seam (wicked-estate >= 0.5.0): annotations() /
+# node_annotations() / community_labels(). Graceful on older engines.
+# ===========================================================================
+@unittest.skipIf(we is None, "wicked_estate not importable")
+class TestTypedAnnotationsGraceful(unittest.TestCase):
+    def test_missing_db_returns_empty_not_raise(self):
+        # The read seam never raises on an absent/old engine — empty result.
+        self.assertEqual(we.annotations("/no/such.db", "X"), [])
+        self.assertEqual(we.node_annotations("/no/such.db"), {})
+        self.assertEqual(we.community_labels("/no/such.db"), {})
+        self.assertEqual(we.advisory_nodes("/no/such.db"), [])
+
+
+@unittest.skipIf(we is None, "wicked_estate not importable")
+@unittest.skipIf(BINARY is None, "wicked-estate binary not available")
+class TestTypedAnnotationsRealBinary(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmpdir = tempfile.mkdtemp(prefix="we-typedann-")
+        src = os.path.join(cls.tmpdir, "src")
+        os.makedirs(src)
+        with open(os.path.join(src, "P.java"), "w") as f:
+            # Intra-class call chains so community detection forms real communities.
+            f.write(
+                "class Producer {\n"
+                "  void send() { doSend(); }\n"
+                "  void doSend() { flush(); }\n"
+                "  void flush() {}\n"
+                "}\n"
+                "class Consumer {\n"
+                "  void poll() { fetch(); }\n"
+                "  void fetch() { commit(); }\n"
+                "  void commit() {}\n"
+                "}\n")
+        cls.db = os.path.join(cls.tmpdir, "g.db")
+        subprocess.run([BINARY, "index", src, "--db", cls.db, "--force"],
+                       check=True, capture_output=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmpdir, ignore_errors=True)
+
+    def test_question_round_trips_with_advisory_flag(self):
+        subprocess.run([BINARY, "annotate", "Producer", "--type", "question",
+                        "--key", "q1", "--value", "is acks=all needed?",
+                        "--db", self.db], check=True, capture_output=True)
+        q = we.annotations(self.db, "Producer", type="question")
+        self.assertTrue(q, "question annotation should round-trip")
+        # order-independent (the class DB is shared across tests): all questions are
+        # advisory, and the one we wrote is present.
+        self.assertTrue(all(a["type"] == "question" and a["advisory"] for a in q))
+        self.assertIn("is acks=all needed?", {a["value"] for a in q})
+
+    def test_node_annotations_summary_flags_advisory(self):
+        subprocess.run([BINARY, "annotate", "Consumer", "--type", "assumption",
+                        "--key", "a1", "--value", "assumes ordered delivery",
+                        "--db", self.db], check=True, capture_output=True)
+        na = we.node_annotations(self.db)
+        advisory = [sid for sid, r in na.items() if r["summary"].get("has_advisory")]
+        self.assertTrue(advisory, "assumption must surface in has_advisory summary")
+
+    def test_community_labels_from_clusters_annotate(self):
+        subprocess.run([BINARY, "clusters", "1", "--annotate", "--db", self.db],
+                       check=True, capture_output=True)
+        labels = we.community_labels(self.db)
+        self.assertTrue(labels, "clusters --annotate should co-locate community labels")
+        # every label is a string id; the co-located form domain_graph can consume
+        self.assertTrue(all(isinstance(v, str) for v in labels.values()))
+
+    def test_advisory_nodes_is_the_gate_review_queue(self):
+        subprocess.run([BINARY, "annotate", "Producer", "--type", "question",
+                        "--key", "qg", "--value", "needs a human",
+                        "--db", self.db], check=True, capture_output=True)
+        rows = we.advisory_nodes(self.db)
+        self.assertTrue(rows, "advisory annotations must surface as the review queue")
+        r = next(x for x in rows if x["name"] == "Producer")
+        self.assertTrue(all(a["advisory"] for a in r["advisory"]))
+        self.assertIn("question", {a["type"] for a in r["advisory"]})
+
+    def test_annotated_with_still_works_for_naming(self):
+        # REGRESSION: legacy key/value tags (domain_*) must still query via
+        # --annotated-with under the typed-annotation schema (naming depends on it).
+        subprocess.run([BINARY, "annotate", "Producer", "--key", "domain_entity",
+                        "--value", "PRODUCER", "--db", self.db],
+                       check=True, capture_output=True)
+        nodes = we.nodes_annotated_with(self.db, "domain_entity", "PRODUCER")
+        self.assertTrue(nodes, "--annotated-with KEY=VALUE must still resolve")
+
+
 if __name__ == "__main__":
     unittest.main()
