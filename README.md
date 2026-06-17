@@ -83,15 +83,18 @@ Without it, the design gate reports an error (rather than silently skipping the 
 The `anti-legacy:orchestrate` skill sequences everything automatically:
 
 ```
-setup → survey → analyze → extraction → blueprint → test-strategy
-      → review-packet → [GATE 1] → planner → [GATE 2] → swarm
-      → target-review → [GATE 3 auto] → semantic-validation → [GATE 3B]
-      → uat-crew → [GATE 4] → deploy
+setup → survey → analyze → extraction → negative-extraction → blueprint
+      → test-strategy → review-packet → [GATE 1] → planner → [GATE 2]
+      → functional-tests → swarm → target-review → [GATE 3 auto]
+      → semantic-validation → [GATE 3B] → uat-crew → [GATE 4]
+      → document → final-review → [GATE 5 auto] → deploy
 ```
 
-`survey` runs `wicked-estate index` over each source repo (one graph DB per repo, federated via cross-graph for multi-repo); `extraction` crawls that code graph with adaptive ring expansion and writes a business rule onto every behavior-bearing node — each ends **resolved** (rule + confidence + provenance) or **risk-flagged** (human research queue) — to a provable coverage terminal (`coverage-report.json`).
+`survey` runs `wicked-estate index` over each source repo (one graph DB per repo, federated via cross-graph for multi-repo); `extraction` crawls that code graph with adaptive ring expansion and writes a business rule onto every behavior-bearing node — each ends **resolved** (rule + confidence + provenance) or **risk-flagged** (human research queue) — to a provable coverage terminal (`coverage-report.json`). `negative-extraction` is a second pass that deepens the crawl into each resolved node's error-handling source for `error_paths` + `validations`. `functional-tests` authors executable acceptance tests from the test contracts *before* the build (shift-left), `document` writes the target app's README/ARCHITECTURE/DEPENDENCIES/ENVIRONMENTS, and `final-review` scans the built app for stubs/mocks/TODOs before deploy.
 
-Eight gates: **GATE 0** (discovery, auto — survey integrity), **GATE 1** (design, human/architect), **GATE 1B** (semantic-join, human — multi-repo only), **GATE 2** (plan, human — PM + tech lead both sign), **GATE 3** (build integrity, auto — clears on PASS evidence), **GATE 3B** (semantic, human — rule-coverage round-trip review), **GATE 4** (UAT, human — must differ from the GATE 1 evaluator), **GATE 5** (completeness, auto — zero HIGH findings).
+Eight gates: **GATE 0** (discovery, auto — survey integrity), **GATE 1** (design, human/architect), **GATE 1B** (semantic-join, human — multi-repo only), **GATE 2** (plan, human — PM + tech lead both sign), **GATE 3** (build integrity, auto — clears on PASS evidence), **GATE 3B** (semantic, human — rule-coverage round-trip review), **GATE 4** (UAT, human — must differ from the GATE 1 evaluator), **GATE 5** (completeness, auto — `final-review` clears `GATE_5_COMPLETENESS` on a zero-HIGH-finding completeness report).
+
+A producer-side **readiness gate** (`python3 .anti-legacy/run.py precheck <phase>`) backs the Tier-A deliverables: a producer calls `require_ready(phase)` on startup and **refuses** (exits non-zero) when the pipeline is incomplete, orphaned, or state-desynced from disk — see [How to use it](HOW_TO_USE.md).
 
 Or run individual phases: `anti-legacy:setup`, `anti-legacy:survey`, etc.
 
