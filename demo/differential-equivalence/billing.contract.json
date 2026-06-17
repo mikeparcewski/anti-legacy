@@ -1,0 +1,9 @@
+{
+  "req_id": "BILLING-1000-CALC-INVOICE",
+  "title": "Calculate invoice tax and total",
+  "legacy_components": ["demo/legacy-src/BILLING.cbl"],
+  "parity_rules": [
+    {"field": "INV-TAX", "precision": 2, "source_type": "COMP-3 PIC S9(5)V99"},
+    {"field": "INV-TOTAL", "precision": 2, "source_type": "COMP-3 PIC S9(7)V99"}
+  ]
+}

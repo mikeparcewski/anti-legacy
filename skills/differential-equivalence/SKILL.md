@@ -34,6 +34,15 @@ a curated golden-file set. This skill proves *target == golden*; capturing the g
 documented upstream step, not magic. Without a corpus the gate is honestly **NOT_APPLICABLE** —
 it does not fabricate a pass-by-absence, it states that parity was *not evaluated*.
 
+**Worked example — `demo/differential-equivalence/`.** When the source system can't be run (the
+demo `BILLING.cbl` needs VSAM + DB2 + a subprogram), build a **reference oracle**: a faithful
+re-implementation of the legacy *source arithmetic*, traceable to the source lines. `billing_oracle.py`
+encodes `BILLING.cbl`'s `COMPUTE INV-TAX = INV-AMOUNT * WS-TAX-RATE` with its real COBOL semantics
+(**no `ROUNDED` clause → truncation** to the COMP-3 field's 2 dp). Run it (see that README) to watch
+the gate flip from NOT_APPLICABLE to a real **PASS** (a target that truncates like COBOL) / **FAIL**
+(a naive HALF_UP target that silently loses a cent — the COMP-3 catch). A reference oracle is the
+standard golden a migration team builds when the mainframe isn't runnable — not an LLM guess.
+
 ## Inputs
 
 - **Golden corpus** (`corpus.json`): `[{ "scenario_id", "req_id", "inputs"?, "golden_output": {field: value, …} }, …]`
