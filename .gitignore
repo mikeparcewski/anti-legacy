@@ -22,3 +22,6 @@ __pycache__/
 # for local testing.) The shipped public demo graph that the eval-tier tests validate now
 # lives under tests/evals/fixtures/real_demo_requirements_graph.json, not here.
 .anti-legacy/
+
+# Agent worktrees (temporary, per-agent git worktrees) — never commit
+.claude/worktrees/

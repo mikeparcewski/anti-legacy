@@ -44,7 +44,13 @@ Cross-artifact invariants no skill may relax (see Universal Don'ts): every wicke
 
 The full gate set is **eight** ids. The six mainline gates run in order, no skipping, no reordering: GATE_1_DESIGN, GATE_2_PLAN, GATE_3_BUILD, GATE_3B_SEMANTIC, GATE_4_UAT, GATE_5_COMPLETENESS. GATE_1_DESIGN, GATE_2_PLAN, GATE_4_UAT require a human. GATE_3B_SEMANTIC is a human semantic review. GATE_3_BUILD auto-clears on evidence (build-integrity `status: PASS` + round-trip rule_coverage ≥ 1.0); GATE_5_COMPLETENESS auto-clears on evidence (`completeness-report` `status: PASS`) at the `final-review` phase and kicks back on FAIL; no skill, script, or agent may synthesize a human gate. Two further gates sit outside the mainline sequence: **GATE_0_DISCOVERY** (automated, runs post-survey) and **GATE_1B_SEMANTIC_JOIN** (multi-repo only — the semantic-join side phase). `anti-legacy:gatekeeper` is the authoritative list of all eight gates, their evaluators, and their required evidence ids.
 
-Three phases sit between the gate phases to host the content agents' work: **`functional-tests`** (after GATE_2_PLAN, before `build` — a blocking pre-build validation pass), **`document`** (after GATE_4_UAT, before `final-review` — the documentation pass), and **`final-review`** (after `document`, before `complete` — the automated GATE_5_COMPLETENESS completeness gate). Their producing skills/scripts are built separately; the manifest only wires the phase enum + sequence + advance preconditions here.
+Three phases sit between the gate phases to host the content agents' work: **`functional-tests`** (after GATE_2_PLAN, before `build` — a blocking pre-build validation pass), **`document`** (after GATE_4_UAT, before `final-review` — the documentation pass), and **`final-review`** (after `document`, before `complete` — the automated GATE_5_COMPLETENESS completeness gate). Each phase's field schema and done-gate assertions live in its producing skill (named below); the manifest wires the phase enum + sequence + advance preconditions.
+
+| Phase | Skill | Purpose | Inputs | Outputs | Gate |
+|---|---|---|---|---|---|
+| `functional-tests` | `anti-legacy:functional-tests` | Author executable acceptance tests from the per-requirement contracts *before* the build (shift-left), and HARD-GATE that the contracts are runnable/unambiguous. JUnit 5 (Java) / pytest (Python); any other stack errors explicitly — never a silent pass. | `contracts/{domain}/*.contract.json`, `config.target_stack` | Per-stack tests under the target tree (`{target_path}/src/test/java/acceptance/` or `{target_path}/tests/acceptance/`) + `evidence/functional-authoring-report.json` | No gate of its own; blocking pre-build pass. Post-build execution runs in `anti-legacy:target-review` and feeds GATE_3_BUILD. |
+| `document` | `anti-legacy:document` | Synthesize the target app's human-facing docs FROM committed artifacts (config/blueprint/requirements/target graphs) — not by coining LLM prose. Writes them INSIDE the target app dir so the delivered repo is self-describing. | `config.json`, `blueprint.json`, `requirements_graph.json`, `target_graph.json` | `README.md` / `ARCHITECTURE.md` / `DEPENDENCIES.md` / `ENVIRONMENTS.md` under `config.target_path`, each registered (`doc-readme`/`doc-architecture`/`doc-dependencies`/`doc-environments`) | None of its own; precedes GATE_5 (whose DOCS dimension scans these). |
+| `final-review` | `anti-legacy:final-review` | Completeness-review swarm: one parallel reviewer per dimension — CODE / DOCS / CONFIG / BUILD — runs the deterministic `completeness_scanner`, reasons over findings, FAILs on any HIGH. Reviews the docs + functional tests too (runs last). On FAIL, kicks back to the phase that owns the gap. | The built target tree at `config.target_path`; the docs + tests produced upstream | `evidence/completeness-report.json` (`status: PASS\|FAIL`, dimension + severity counts) + per-dimension slices | **GATE_5_COMPLETENESS** — auto-clears on `status: PASS` (zero HIGH); kicks back on FAIL. |
 
 ### Generalized gate kick-back
 
@@ -63,6 +69,10 @@ Recording any gate `failed` (`manifest gate <ID> --opinion failed`) triggers a *
 | `final-review` | GATE_5_COMPLETENESS |
 
 If a required gate is not `passed`/`waived`, `advance` exits non-zero and the phase is unchanged — sign or waive the gate first. GATE_0_DISCOVERY and GATE_1B_SEMANTIC_JOIN are intentionally NOT in this map: neither has a dedicated `gate-*` phase enum value (GATE_0 is post-survey automated; GATE_1B is the optional semantic-join side phase), so they are enforced by their own skills and runners, not by the advance precondition. `final-review` is the only non-`gate-*`-named phase in the map: it is itself the completeness-gate phase, so leaving it requires GATE_5_COMPLETENESS.
+
+### Producer readiness gate (precheck)
+
+Separate from the gate-precondition check above (which guards `manifest advance`), `antilegacy_core.precheck` is an **execution-time** readiness gate the *producers* consult before they run. A producer calls `require_ready(phase, force=False)` on startup; precheck evaluates per-phase probes — required upstream gates `passed`/`waived`, registered artifacts present-on-disk + checksum-verified, a **disk-reality reconcile** (a derived artifact whose `depends_on` source is missing or checksum-drifted is flagged orphaned/stale, e.g. a `requirements_graph.json` that outlived its gitignored `legacy-graph`), and phase completeness (every active requirement's `business_rules` carry a numeric `confidence`; coverage ≥ 1.0). On any block-severity probe it prints the blockers + fixes to stderr and `sys.exit(1)` — it REFUSES rather than producing against an incomplete/orphaned/desynced pipeline (override with `force=True`, NOT recommended). Run it standalone with `python3 .anti-legacy/run.py precheck <phase> [--advisory] [--json]` (`--advisory` always exits 0 and just reports). The **Tier-A deliverables** (`prd`, `diagrams`, `test-plan`, `test-scripts`, `migration-plan`) gate on it; the **living logs** (`risk-log`, `decisions-log`, `evidence-log`) intentionally do NOT — they must run on an incomplete pipeline to SURFACE its gaps (§6). precheck is read-only: it never writes `audit.jsonl`, advances a phase, or clears a gate.
 
 **Recording a gate** (one form for all of them):
 ```bash
@@ -138,9 +148,11 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 | Extracting error paths + negative requirements (deepen the crawl, after extraction) | `anti-legacy:negative-extraction` |
 | Re-thinking annotated rules into the domain graph (§I5) | `anti-legacy:graph-translator` |
 | Designing target architecture | `anti-legacy:blueprint` |
+| Generating target-state build skills from the blueprint (a skill that writes build skills) | `anti-legacy:skill-forge` |
 | Writing test contracts per requirement | `anti-legacy:test-strategy` |
 | Compiling team review document | `anti-legacy:review-packet` |
 | Producing the stakeholder deliverables package (graph ready → PRD, diagrams, test strategy + scripts, migration plan, risk/decisions/evidence logs) | `anti-legacy:deliverables` |
+| Adversarial review of ANY generated output — individually or batch (read-only critic vs its source data → PASS/REVISE/BLOCK; advisory, not a gate; the pre-build analog of `anti-legacy:uat-reviewer`) | `anti-legacy:adversarial-review` |
 | Detailed product requirements (PRD) | `anti-legacy:prd` |
 | Architecture diagrams (Mermaid) | `anti-legacy:diagrams` |
 | Detailed functional test strategy (data-parity / UAT / E2E / API) | `anti-legacy:test-plan` |
@@ -176,9 +188,11 @@ All scripts are invoked through the workspace dispatcher: `python3 .anti-legacy/
 | `git_brain` | Git-backed memory — init, store, search, ingest, sync, status | External brain services or npm packages |
 | `wicked_estate` | The code-graph engine seam — resolve binary, index/stats/query/blast-radius/source/rank/cross-graph, resolve-symbol-id, annotate, by-requirement | Raw-SQLite graph reads (except the one documented read-only id-resolution lookup) |
 | `coverage` | Resolved-or-flagged coverage over graph + `annotations.jsonl` → `coverage-report.{json,md}`; exits non-zero (lists unaccounted SymbolIds) when `coverage < 1.0` | A substitute for annotating the nodes |
+| `precheck` | Producer-side readiness gate (`precheck <phase> [--advisory] [--json]`): per-phase completeness predicates + disk-reality reconcile; producers call `require_ready(phase, force=)` and REFUSE (exit 1) on an incomplete/orphaned/state-desynced pipeline. Read-only — never writes audit.jsonl, advances a phase, or clears a gate | Clearing or recording a gate (that is `manifest gate`) |
 | `graph_normalizer` | Code graph → draft requirements scaffold (pinned reference; `domain_graph` is the production §I5 builder) | Front-half rule extraction (that is `extraction`) |
 | `validator_discovery` | The build/semantic/UAT verifier — runs build tooling, writes evidence (`run --gate <id>`) | Clearing a gate manually |
 | `packet_generator` | Requirements graph → offline Markdown packet | Replacing the human review |
+| `capability_graph` | md-as-code self-introspection of an **agentic** codebase: classifies `skills/*/SKILL.md` (frontmatter `name:`) as behavior vs reference/docs, mines capabilities + triggers, joins the manifest phase/gate model → JSON or the static feature page (`--site site/features.html`) | Indexing the **legacy estate** (that is `wicked_estate index`) — this introspects the plugin's own skills, not target/legacy source |
 
 `python3 .anti-legacy/run.py manifest status` is the authoritative pipeline state. File presence is not.
 
