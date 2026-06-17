@@ -192,7 +192,6 @@ All scripts are invoked through the workspace dispatcher: `python3 .anti-legacy/
 | `graph_normalizer` | Code graph → draft requirements scaffold (pinned reference; `domain_graph` is the production §I5 builder) | Front-half rule extraction (that is `extraction`) |
 | `validator_discovery` | The build/semantic/UAT verifier — runs build tooling, writes evidence (`run --gate <id>`) | Clearing a gate manually |
 | `packet_generator` | Requirements graph → offline Markdown packet | Replacing the human review |
-| `capability_graph` | md-as-code self-introspection of an **agentic** codebase: classifies `skills/*/SKILL.md` (frontmatter `name:`) as behavior vs reference/docs, mines capabilities + triggers, joins the manifest phase/gate model → JSON or the static feature page (`--site site/features.html`) | Indexing the **legacy estate** (that is `wicked_estate index`) — this introspects the plugin's own skills, not target/legacy source |
 
 `python3 .anti-legacy/run.py manifest status` is the authoritative pipeline state. File presence is not.
 
