@@ -42,7 +42,7 @@ Cross-artifact invariants no skill may relax (see Universal Don'ts): every wicke
 
 ## Gate Approval Cycle
 
-The full gate set is **eight** ids. The six mainline gates run in order, no skipping, no reordering: GATE_1_DESIGN, GATE_2_PLAN, GATE_3_BUILD, GATE_3B_SEMANTIC, GATE_4_UAT, GATE_5_COMPLETENESS. GATE_1_DESIGN, GATE_2_PLAN, GATE_4_UAT require a human. GATE_3B_SEMANTIC is a human semantic review. GATE_3_BUILD auto-clears on evidence (build-integrity `status: PASS` + round-trip rule_coverage ≥ 1.0); GATE_5_COMPLETENESS auto-clears on evidence (`completeness-report` `status: PASS`) at the `final-review` phase and kicks back on FAIL; no skill, script, or agent may synthesize a human gate. Two further gates sit outside the mainline sequence: **GATE_0_DISCOVERY** (automated, runs post-survey) and **GATE_1B_SEMANTIC_JOIN** (multi-repo only — the semantic-join side phase). `anti-legacy:gatekeeper` is the authoritative list of all eight gates, their evaluators, and their required evidence ids.
+The full gate set is **nine** ids. The six mainline gates run in order, no skipping, no reordering: GATE_1_DESIGN, GATE_2_PLAN, GATE_3_BUILD, GATE_3B_SEMANTIC, GATE_4_UAT, GATE_5_COMPLETENESS. GATE_1_DESIGN, GATE_2_PLAN, GATE_4_UAT require a human. GATE_3B_SEMANTIC is a human semantic review. GATE_3_BUILD auto-clears on evidence (build-integrity `status: PASS` + round-trip rule_coverage ≥ 1.0); GATE_5_COMPLETENESS auto-clears on evidence (`completeness-report` `status: PASS`) at the `final-review` phase and kicks back on FAIL; no skill, script, or agent may synthesize a human gate. Three further gates sit outside the mainline advance-precondition sequence: **GATE_0_DISCOVERY** (automated, runs post-survey), **GATE_1B_SEMANTIC_JOIN** (multi-repo only — the semantic-join side phase), and **GATE_3C_DIFFERENTIAL** (automated executed-parity gate, ISS-7 — runs a golden legacy-I/O corpus against the built target and asserts COMP-3-safe output parity within each contract's `parity_rules`; vacuous-safe when no corpus is supplied, and a FAIL kicks back to `build`). `anti-legacy:gatekeeper` is the authoritative list of all nine gates, their evaluators, and their required evidence ids.
 
 Three phases sit between the gate phases to host the content agents' work: **`functional-tests`** (after GATE_2_PLAN, before `build` — a blocking pre-build validation pass), **`document`** (after GATE_4_UAT, before `final-review` — the documentation pass), and **`final-review`** (after `document`, before `complete` — the automated GATE_5_COMPLETENESS completeness gate). Each phase's field schema and done-gate assertions live in its producing skill (named below); the manifest wires the phase enum + sequence + advance preconditions.
 
@@ -66,9 +66,10 @@ Recording any gate `failed` (`manifest gate <ID> --opinion failed`) triggers a *
 | `gate-plan-review` | GATE_2_PLAN |
 | `gate-build-integrity` | GATE_3_BUILD **and** GATE_3B_SEMANTIC |
 | `gate-uat-signoff` | GATE_4_UAT |
+| `document` | GATE_4_UAT |
 | `final-review` | GATE_5_COMPLETENESS |
 
-If a required gate is not `passed`/`waived`, `advance` exits non-zero and the phase is unchanged — sign or waive the gate first. GATE_0_DISCOVERY and GATE_1B_SEMANTIC_JOIN are intentionally NOT in this map: neither has a dedicated `gate-*` phase enum value (GATE_0 is post-survey automated; GATE_1B is the optional semantic-join side phase), so they are enforced by their own skills and runners, not by the advance precondition. `final-review` is the only non-`gate-*`-named phase in the map: it is itself the completeness-gate phase, so leaving it requires GATE_5_COMPLETENESS.
+If a required gate is not `passed`/`waived`, `advance` exits non-zero and the phase is unchanged — sign or waive the gate first. GATE_0_DISCOVERY and GATE_1B_SEMANTIC_JOIN are intentionally NOT in this map: neither has a dedicated `gate-*` phase enum value (GATE_0 is post-survey automated; GATE_1B is the optional semantic-join side phase), so they are enforced by their own skills and runners, not by the advance precondition. Two **non-`gate-*`-named** phases are still in the map: `document` (ISS-9 — leaving it requires GATE_4_UAT, so the documentation pass can't feed the completeness review ahead of UAT sign-off; this also closes the phase-jump bypass of skipping `gate-uat-signoff`) and `final-review` (it is itself the completeness-gate phase, so leaving it requires GATE_5_COMPLETENESS). Entering either is always allowed — only the exit gates.
 
 ### Producer readiness gate (precheck)
 
@@ -114,6 +115,9 @@ Status reports state: (1) what is verifiably true with evidence, (2) what is NOT
 ### §7 — Three failures, then recon
 After 3 failed attempts at the same problem: stop. Send a read-only recon agent before attempt 4. The third failure is evidence the model of the problem is wrong, not the fix.
 
+### §8 — Every producer self-reviews its output (advisory)
+Every producer runs an **advisory adversarial review** on its primary artifact at its done-gate — *before* declaring done — because every artifact in this pipeline is rendered/derived from upstream data and the render is trusting. Use `anti-legacy:adversarial-review` in **single-artifact mode**: `refine_loop descriptor --artifact <id>` resolves the rendered file + the source data the critic cross-checks (the requirements-graph §2 spine + the artifact's manifest `depends_on`); dispatch the read-only critic against it. On `REVISE`/`BLOCK`, run the **bounded loop** (`refine_loop decide --verdict … --attempt …`): re-run the producer to fix at source and re-review, capped at §7's three attempts (then recon), or proceed under a **stated** `--forced` override. This is advisory — it clears no gate and advances no phase (a critic verdict is never a gate approval, per Universal Don'ts). It is the pre-build analog of `anti-legacy:uat-reviewer` for built code. *"Adversarial review for all outputs, even individually."*
+
 ---
 
 ## Universal Don'ts
@@ -122,7 +126,7 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 
 **Don't drop file_path or legacy_components.** Any code that builds a node without `file_path`, or a requirement without `legacy_components`, is broken. Both are mandatory and non-null.
 
-**Don't auto-clear human gates.** Of the eight gates, GATE_1_DESIGN, GATE_2_PLAN, GATE_3B_SEMANTIC, and GATE_4_UAT require a human. GATE_3_BUILD, GATE_5_COMPLETENESS, and GATE_0_DISCOVERY are the automated, evidence-cleared gates (GATE_1B_SEMANTIC_JOIN is multi-repo only — see `anti-legacy:gatekeeper` for the authoritative list). No skill, script, or agent may synthesize a human gate approval.
+**Don't auto-clear human gates.** Of the nine gates, GATE_1_DESIGN, GATE_2_PLAN, GATE_3B_SEMANTIC, and GATE_4_UAT require a human. GATE_3_BUILD, GATE_5_COMPLETENESS, GATE_0_DISCOVERY, and GATE_3C_DIFFERENTIAL are the automated, evidence-cleared gates (GATE_1B_SEMANTIC_JOIN is multi-repo only — see `anti-legacy:gatekeeper` for the authoritative list). No skill, script, or agent may synthesize a human gate approval.
 
 **Don't build Python parsers for modern languages.** Java, Go, TypeScript, C#, Python — the engine (`wicked-estate index`) indexes these natively, in the same pass as the mainframe estate. A regex parser is strictly less accurate and less complete than the engine's tree-sitter-backed graph. (`survey-modern` is retired — see §3; do not resurrect a grep track.)
 
@@ -166,6 +170,7 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 | Building target code | `anti-legacy:swarm` |
 | Verifying compilation | `anti-legacy:target-review` |
 | Verifying rule coverage (round-trip semantic check) | `anti-legacy:semantic-validation` |
+| Executed output-parity gate — golden legacy corpus vs the built target's outputs (GATE_3C_DIFFERENTIAL) | `anti-legacy:differential-equivalence` |
 | Driving the pipeline phase-to-phase | `anti-legacy:orchestrate` |
 | Running UAT | `anti-legacy:uat-crew` |
 | Generating deployment artifacts | `anti-legacy:deploy` |
@@ -192,6 +197,8 @@ All scripts are invoked through the workspace dispatcher: `python3 .anti-legacy/
 | `graph_normalizer` | Code graph → draft requirements scaffold (pinned reference; `domain_graph` is the production §I5 builder) | Front-half rule extraction (that is `extraction`) |
 | `validator_discovery` | The build/semantic/UAT verifier — runs build tooling, writes evidence (`run --gate <id>`) | Clearing a gate manually |
 | `packet_generator` | Requirements graph → offline Markdown packet | Replacing the human review |
+| `refine_loop` | The bounded make→review→refine primitive (§8): `descriptor --artifact <id>` resolves the generic single-artifact critic target (rendered file + source data from the §2 spine + manifest `depends_on`); `decide --verdict … --attempt …` returns the next move (refine / stop-converged / stop-at-§7-cap-recommend-recon / forced) with a branchable exit code | Acting on the decision (it computes only — the agent runs the producer + critic) or clearing a gate |
+| `differential_equivalence` | The executed output-parity harness (GATE_3C_DIFFERENTIAL, ISS-7): `run --corpus <golden> --actuals <target> [--contracts …]` diffs the built target's outputs against a golden legacy corpus field-by-field within each contract's `parity_rules` (precision-aware Decimal — COMP-3 safe), writing `differential-equivalence-report.json`. Vacuous-safe (no corpus → NOT_APPLICABLE) | Asserting parity against LLM-authored `expected_output` (that is not a legacy golden) or relaxing a `parity_rule` to force a money mismatch to pass |
 
 `python3 .anti-legacy/run.py manifest status` is the authoritative pipeline state. File presence is not.
 

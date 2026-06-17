@@ -141,6 +141,8 @@ class ValidatorRunner:
             return self._run_gate_3b_semantic()
         elif gate_id == "GATE_4_UAT":
             return self._run_gate_4_uat()
+        elif gate_id == "GATE_3C_DIFFERENTIAL":
+            return self._run_gate_3c_differential()
         else:
             print(f"Error: Unknown gate '{gate_id}'", file=sys.stderr)
             return False
@@ -763,6 +765,49 @@ class ValidatorRunner:
         except Exception as e:
             print(f"GATE_0_DISCOVERY Error during checks: {e}", file=sys.stderr)
             return False
+
+    def _run_gate_3c_differential(self):
+        """GATE_3C_DIFFERENTIAL (ISS-7): executed target-vs-legacy output parity.
+
+        Reads the differential-equivalence report (produced by
+        anti-legacy:differential-equivalence). VACUOUS-SAFE, like the functional-acceptance
+        check: an absent report or a NOT_APPLICABLE status (no golden corpus supplied) does
+        NOT block — the gate is only meaningful when a golden corpus exists. A FAIL (any
+        declared-parity violation, e.g. COMP-3 precision loss) blocks and lists the divergences.
+        """
+        report_path = os.path.join(self.workspace, ".anti-legacy", "evidence",
+                                   "differential-equivalence-report.json")
+        if not os.path.exists(report_path):
+            print("GATE_3C_DIFFERENTIAL: no differential-equivalence report present — NOT "
+                  "EVALUATED (supply a golden corpus + run anti-legacy:differential-equivalence "
+                  "to make this gate non-vacuous). ✓")
+            return True
+        try:
+            with open(report_path) as f:
+                report = json.load(f)
+        except (OSError, ValueError) as e:
+            print(f"GATE_3C_DIFFERENTIAL: BLOCK - could not parse "
+                  f"differential-equivalence-report.json: {e}", file=sys.stderr)
+            return False
+        status = str(report.get("status", "")).upper()
+        agg = report.get("aggregate", {})
+        if status == "NOT_APPLICABLE":
+            print("GATE_3C_DIFFERENTIAL: NOT_APPLICABLE (no golden corpus supplied) — not blocking. ✓")
+            return True
+        if status == "PASS":
+            print(f"GATE_3C_DIFFERENTIAL: PASSED — {agg.get('scenarios', 0)} scenario(s) within "
+                  f"declared parity tolerances. ✓")
+            return True
+        print(f"GATE_3C_DIFFERENTIAL: BLOCK - {agg.get('fail', '?')} scenario(s) / "
+              f"{agg.get('violations', '?')} field(s) diverge from the legacy golden output.",
+              file=sys.stderr)
+        for sc in report.get("scenarios", []):
+            if sc.get("status") != "PASS":
+                for fld in sc.get("fields", []):
+                    if not fld.get("parity", True):
+                        print(f"  - {sc.get('scenario_id')} [{sc.get('req_id')}] "
+                              f"{fld.get('field')}: {fld.get('detail')}", file=sys.stderr)
+        return False
 
     def _run_compiler(self, tool_results):
         """Compile codebase based on target stack."""

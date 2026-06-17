@@ -281,7 +281,32 @@ python3 .anti-legacy/run.py manifest register test-strategy \
 python3 .anti-legacy/run.py manifest advance test-strategy
 ```
 
+## Step 8: Adversarially self-review the test-strategy contract set (advisory — AGENTS.md §8)
 
+The Step 7a assertion only proves contracts exist and that no two share identical
+`inputs` — it cannot see a money/rate/count output that shipped with NO `parity_rules`
+entry (COMP-3 precision loss is silent and catastrophic), a contract that dropped its
+inherited `legacy_components` (breaking the §2 thread req_id → source), or a scenario
+whose `expected_output` does not actually exercise the rule it cites. Before you report
+done, adversarially review the contract set you just produced under
+`contracts/{domain}/*.contract.json` — the duplicate-inputs check is trusting; this is
+the loop that distrusts it. Resolve the single-artifact critic target, then dispatch the
+read-only critic against it:
+
+```bash
+python3 .anti-legacy/run.py refine_loop descriptor --artifact test-strategy --json
+```
+
+That resolves the rendered artifact + the source data the critic must cross-check (the
+requirements-graph §2 spine + this artifact's manifest `depends_on` — the blueprint).
+Dispatch `anti-legacy:adversarial-review` (single-artifact mode) against the descriptor;
+point it at the two failure modes this phase owns — **`parity_rules` on every numeric
+output**, and **§2 traceability** (every contract's `req_id` → its inherited
+`legacy_components`). On `REVISE`/`BLOCK`, run the bounded loop — `refine_loop decide
+--verdict <v> --attempt <n> --artifact test-strategy` — re-running
+`anti-legacy:test-strategy` to fix at source and re-reviewing, capped at §7's three
+attempts (then recon), or proceed under a **stated** `--forced` override. **Advisory: it
+clears no gate and advances no phase.**
 
 ## Output
 

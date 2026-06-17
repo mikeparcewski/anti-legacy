@@ -57,10 +57,18 @@ dispatch uses the host-integrated agent runtime.
 - It reads only what exists; a deliverable that degraded (missing input) is still reviewed —
   the critic checks whether it *honestly named* the gap (§6) rather than papering over it.
 
-## Parameters
+## Two modes
 
-- **deliverable** (optional): restrict to a single artifact id (e.g. `deliverable-prd`).
-  Defaults to every rendered deliverable.
+- **Batch (deliverables):** review every rendered deliverable at once.
+  `deliverable_review_worklist` assembles the worklist (Step 1); `--deliverable <id>`
+  restricts to one deliverable.
+- **Single artifact — ANY producer's output (ISS-12):** review one arbitrary registered
+  artifact — `requirements-graph`, `blueprint-json`, `task-plan`, a generated build skill,
+  a target doc. `refine_loop descriptor --artifact <id>` resolves its rendered file + the
+  source data the critic must cross-check (the requirements graph §2 spine + the artifact's
+  manifest `depends_on` edges). This is how **every producer self-reviews its output** at its
+  done-gate — the universal application of *"adversarial review for all outputs, even
+  individually."* Dispatch the SAME critic (Step 2) against that one descriptor.
 
 ## Step 1: Assemble the critic worklist
 
@@ -177,22 +185,34 @@ Report to the user (§6 — what is true, what is not, what is next):
 - Any deliverable that was `registered` but **not present** (a render's file is missing).
 - The explicit reminder that **this is advisory** — it cleared no gate and advanced no phase.
 
-## Step 4: On REVISE / BLOCK — refine, or force
+## Step 4: On REVISE / BLOCK — the bounded refine loop (ISS-8)
 
-For each non-PASS deliverable, the finding names its `producing_skill`. The loop is
-`make → adversarial-review → refine`:
+For each non-PASS artifact the finding names its `producing_skill`. The loop is
+`make → adversarial-review → refine`, **bounded** by the `refine_loop` primitive so it can
+never spin forever. After each critic verdict, ask the primitive what to do next:
 
-- **Refine (default):** re-run the producing deliverable skill (e.g. `anti-legacy:prd`,
-  `anti-legacy:risk-log`) so the render is corrected at its source, then re-run this review
-  for that deliverable: `deliverable_review_worklist --deliverable <id>` → re-dispatch its critic.
-- **Force (deliberate, loud):** if you are knowingly shipping a partial/preview package, you
-  may proceed past a REVISE/BLOCK — but say so explicitly in your report (mirroring the
-  `precheck --force` escape: an override is a recorded decision, never silent). A `BLOCK`
-  carried forward without a stated reason is a §6 violation.
+```bash
+python3 .anti-legacy/run.py refine_loop decide --verdict <PASS|REVISE|BLOCK> \
+  --attempt <n> --artifact <id>     # n = the review attempt just completed (1-based)
+```
 
-This skill never edits a deliverable itself, never runs `manifest gate`, and never runs
-`manifest advance`. Correcting a deliverable is the producing skill's job; clearing a gate is
-the human's.
+It returns the next move (and a distinct exit code so orchestrate/CI can branch):
+
+- **PASS → stop, converged** (exit 0). The output agrees with its source data; proceed.
+- **REVISE/BLOCK, attempts remain → refine** (exit 3). Re-run the `producing_skill` so the
+  output is corrected **at its source**, then re-review (single artifact:
+  `refine_loop descriptor --artifact <id>` → re-dispatch the critic; deliverable:
+  `deliverable_review_worklist --deliverable <id>`). Increment the attempt.
+- **REVISE/BLOCK at the §7 cap (default 3) → stop, recommend recon** (exit 4). Three failed
+  attempts is evidence the *model of the problem* is wrong, not the fix — send a read-only
+  recon agent before a 4th try (AGENTS.md §7). Do NOT blind-retry past the cap.
+- **Force (deliberate, loud):** `refine_loop decide --forced` stops past a non-PASS, but you
+  MUST state the override in your report (mirrors `precheck --force` — never a silent skip).
+  A `BLOCK` carried forward without a stated reason is a §6 violation.
+
+This skill never edits an artifact itself, never runs `manifest gate`, and never runs
+`manifest advance`. Correcting the output is the producing skill's job; clearing a gate is
+the human's. `refine_loop` is likewise advisory — it computes the decision, it does not act.
 
 ## Done-gate
 
