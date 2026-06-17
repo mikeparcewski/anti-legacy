@@ -113,7 +113,32 @@ This writes + registers `.anti-legacy/deliverables/README.md` — the package ta
 each deliverable's path, status, produced-at, and a present/absent receipt, plus the canonical
 expected set so anything **not yet produced is named, not silently absent**.
 
-## Step 4: Done-gate, then report
+## Step 4: Adversarial review (advisory — not a gate)
+
+The renders are deterministic and *trusting* — they lay out what the data says. Before sharing
+the package, run the **adversarial review** that distrusts them: it dispatches one read-only
+critic subagent **per deliverable, in parallel**, to challenge each rendered file against the
+source data it was rendered from — hunting unsupported/optimistic claims, dropped §2
+traceability, empty/weak sections, missing parity rules on numeric outputs, "done" that hides a
+gap, and divergence from the requirements graph.
+
+Run `anti-legacy:deliverable-review` (see that skill for the critic micro-context and the
+parallel-dispatch protocol). It assembles the worklist via:
+
+```bash
+python3 .anti-legacy/run.py deliverable_review_worklist --json
+```
+
+then dispatches the critics and returns a structured per-deliverable verdict
+(`findings[]` with severity → **PASS / REVISE / BLOCK**) plus an aggregated package verdict.
+
+**This is advisory adversarial review, NOT a gate.** It clears no gate, advances no phase, and
+registers no artifact. On `REVISE`/`BLOCK`, re-run the named producing deliverable to fix the
+render at its source and re-review, or proceed with an explicit, stated `--force` reason
+(mirroring the precheck override — never a silent skip). Collect the verdicts for the report
+in Step 5.
+
+## Step 5: Done-gate, then report
 
 **Done-gate (BLOCKING).** Assert the index exists and is non-empty and at least one deliverable
 was produced:
@@ -132,6 +157,8 @@ advance` — it registers artifacts only.
 Report to the user:
 - Deliverables package: `.anti-legacy/deliverables/` (open `README.md` for the index)
 - **Produced N / 9** and any deliverable that degraded (which input it was missing)
+- **Adversarial review verdict** (Step 4): the package verdict (PASS / REVISE / BLOCK) and any
+  CRITICAL/MAJOR findings per deliverable — advisory, cleared no gate
 - Reminder: re-run `risk-log`, `decisions-log`, `evidence-log` at each gate to refresh the living
   deliverables
 
@@ -141,6 +168,8 @@ Report to the user:
   migration-plan + Jira CSV, risk/decisions/evidence logs)
 - `.anti-legacy/deliverables/README.md` — the registered index (`deliverables-index`)
 - Manifest: `deliverable-*` artifacts registered; **phase unchanged**
+- Adversarial-review verdicts (`anti-legacy:deliverable-review`, Step 4) — advisory, no artifact
 
-**Next step**: share the package via git/fileshare; feed it into the `review-packet` / GATE_1
-design review. Re-run the living logs at later gates.
+**Next step**: address any REVISE/BLOCK from the adversarial review (re-run the named producing
+deliverable, then re-review), then share the package via git/fileshare and feed it into the
+`review-packet` / GATE_1 design review. Re-run the living logs at later gates.

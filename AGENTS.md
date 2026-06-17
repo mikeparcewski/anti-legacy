@@ -141,6 +141,7 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 | Writing test contracts per requirement | `anti-legacy:test-strategy` |
 | Compiling team review document | `anti-legacy:review-packet` |
 | Producing the stakeholder deliverables package (graph ready → PRD, diagrams, test strategy + scripts, migration plan, risk/decisions/evidence logs) | `anti-legacy:deliverables` |
+| Adversarial review of the rendered deliverables (parallel read-only critic per deliverable → PASS/REVISE/BLOCK; advisory, not a gate) | `anti-legacy:deliverable-review` |
 | Detailed product requirements (PRD) | `anti-legacy:prd` |
 | Architecture diagrams (Mermaid) | `anti-legacy:diagrams` |
 | Detailed functional test strategy (data-parity / UAT / E2E / API) | `anti-legacy:test-plan` |
