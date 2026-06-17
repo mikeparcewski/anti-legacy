@@ -138,6 +138,7 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 | Extracting error paths + negative requirements (deepen the crawl, after extraction) | `anti-legacy:negative-extraction` |
 | Re-thinking annotated rules into the domain graph (§I5) | `anti-legacy:graph-translator` |
 | Designing target architecture | `anti-legacy:blueprint` |
+| Generating target-state build skills from the blueprint (a skill that writes build skills) | `anti-legacy:skill-forge` |
 | Writing test contracts per requirement | `anti-legacy:test-strategy` |
 | Compiling team review document | `anti-legacy:review-packet` |
 | Producing the stakeholder deliverables package (graph ready → PRD, diagrams, test strategy + scripts, migration plan, risk/decisions/evidence logs) | `anti-legacy:deliverables` |
