@@ -182,43 +182,78 @@ def render_site_html(graph):
     caps = graph["capabilities"]
     pipe = graph["pipeline"]
     out = [_HEADER]
+    # 1 — what it does
     out.append('<section class="section section--panel"><div class="container">')
-    out.append('<p class="eyebrow">Generated from the capability graph</p>')
-    out.append('<h1 class="display">Features &amp; capabilities</h1>')
-    out.append('<p class="lead">anti-legacy is an <strong>agentic codebase</strong>: its skills are '
-               'the program. This page is generated from its own capability graph — the %d skill '
-               'agents (behavior), alongside the %d reference docs and %d project docs (not behavior).</p>'
-               % (c["skill_agents"], c["reference_docs"], c["project_docs"]))
+    out.append('<p class="eyebrow">anti-legacy · the domain graph of this codebase</p>')
+    out.append('<h1 class="display">What it does, how to run it, how agents read the graph</h1>')
+    out.append('<p class="lead">anti-legacy indexes one or more legacy codebases into a '
+               '<strong>wicked-estate</strong> code graph, annotates every behavior-bearing node with '
+               'its business rule (resolved or risk-flagged, to a provable coverage terminal), runs gated '
+               'human review, then builds the target system against those requirements — not against the '
+               'legacy code. Gates need human sign-off; everything between runs autonomously.</p>')
     out.append('</div></section>')
 
-    # Capabilities
+    # 2 — how to execute it
     out.append('<section class="section"><div class="container">')
-    out.append('<h2 class="h2">Capabilities (%d skills)</h2>' % len(caps))
-    out.append('<div class="grid">')
-    for cap in caps:
-        trig = "".join('<span class="pill">%s</span> ' % _esc(t) for t in cap["triggers"][:4])
-        out.append('<div class="col-6"><div class="card">'
-                   '<p class="mono-micro">%s</p><h3 class="h3">%s</h3><p>%s</p><p>%s</p></div></div>'
-                   % (_esc(cap["name"]), _esc(cap["dir"]), _esc(cap["summary"]), trig))
-    out.append('</div></div></section>')
-
-    # Pipeline phases
+    out.append('<h2 class="h2">How to execute it</h2>')
+    out.append('<p>Point the orchestrator at a source + target — it sequences every phase and enforces '
+               'the gates:</p>')
+    out.append('<pre class="mono"><code>"Run the anti-legacy pipeline on ./legacy/cobol targeting java"</code></pre>')
     if pipe.get("phases"):
-        out.append('<section class="section section--ink"><div class="container">')
-        out.append('<h2 class="h2">Pipeline phases</h2><p class="mono">%s</p>'
-                   % " &rarr; ".join(_esc(p) for p in pipe["phases"]))
-        out.append('</div></section>')
-
-    # Gates
+        out.append('<p class="mono-micro">%d phases: %s</p>'
+                   % (len(pipe["phases"]), " &rarr; ".join(_esc(p) for p in pipe["phases"])))
     if pipe.get("gates"):
-        out.append('<section class="section"><div class="container">')
-        out.append('<h2 class="h2">Gates (%d)</h2><ul>' % len(pipe["gates"]))
-        for g in pipe["gates"]:
-            prod = pipe["gate_producing"].get(g)
-            prod_s = (" — produced at <code>%s</code>" % _esc(prod[0])) if isinstance(prod, list) and prod else ""
-            out.append("<li><code>%s</code>%s</li>" % (_esc(g), prod_s))
-        out.append('</ul></div></section>')
+        out.append('<p class="mono-micro">%d gates: %s</p>'
+                   % (len(pipe["gates"]), ", ".join(_esc(g) for g in pipe["gates"])))
+    out.append('<p>Or run a single phase as a skill (<code>anti-legacy:survey</code>), or a script via '
+               'the dispatcher <code>python3 .anti-legacy/run.py &lt;stem&gt;</code>.</p>')
+    out.append('</div></section>')
 
+    # 3 — interactive filter / refine over the domain graph (how agents use it)
+    out.append('<section class="section section--ink"><div class="container">')
+    out.append('<h2 class="h2">Explore the domain graph</h2>')
+    out.append('<p class="lead">These %d capabilities are the domain graph of anti-legacy\'s OWN code: '
+               'in an agentic codebase the skills <em>are</em> the program (the %d skill-agents below; the '
+               '%d reference + %d project docs are not behavior). Filter and refine the way an agent does '
+               'when it queries the graph for the capability that matches an intent — type an intent, a '
+               'name, or a trigger:</p>'
+               % (len(caps), c["skill_agents"], c["reference_docs"], c["project_docs"]))
+    out.append('<input id="capq" type="search" autocomplete="off" aria-label="Filter capabilities" '
+               'placeholder="e.g. extract rules · gate · deliverable · build the target" '
+               'style="width:100%;max-width:620px;padding:.7rem 1rem;margin:.5rem 0;font:inherit;'
+               'color:var(--paper-50,#eee);background:var(--ink-800,#181818);'
+               'border:1px solid var(--fog-500,#666);border-radius:10px">')
+    out.append('<p class="mono-micro"><span id="capcount">%d</span> / %d capabilities</p>'
+               % (len(caps), len(caps)))
+    out.append('<div id="caplist" class="grid">')
+    for cap in caps:
+        hay = " ".join([cap["name"], cap["dir"], cap["summary"]] + list(cap["triggers"])).lower()
+        trig = "".join('<span class="pill">%s</span> ' % _esc(t) for t in cap["triggers"][:4])
+        out.append('<div class="col-6 cap-item" data-hay="%s"><div class="card">'
+                   '<p class="mono-micro">%s</p><h3 class="h3">%s</h3><p>%s</p><p>%s</p></div></div>'
+                   % (_esc(hay), _esc(cap["name"]), _esc(cap["dir"]), _esc(cap["summary"]), trig))
+    out.append('</div>')
+    out.append('<p id="capnone" class="lead" style="display:none">No capability matches — refine the query.</p>')
+    out.append('</div></section>')
+    out.append(r'''<script>
+(function(){
+  var q=document.getElementById('capq'),
+      items=[].slice.call(document.querySelectorAll('.cap-item')),
+      count=document.getElementById('capcount'),
+      none=document.getElementById('capnone');
+  if(!q)return;
+  function refine(){
+    var terms=q.value.toLowerCase().split(/\s+/).filter(Boolean), shown=0;
+    items.forEach(function(el){
+      var hay=el.getAttribute('data-hay')||'';
+      var ok=terms.every(function(t){return hay.indexOf(t)>=0;});
+      el.style.display=ok?'':'none'; if(ok)shown++;
+    });
+    count.textContent=shown; if(none)none.style.display=shown?'none':'';
+  }
+  q.addEventListener('input',refine);
+})();
+</script>''')
     out.append(_FOOTER)
     return "\n".join(out)
 

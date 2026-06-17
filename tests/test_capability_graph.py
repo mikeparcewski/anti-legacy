@@ -61,10 +61,13 @@ class CapabilityGraphTest(unittest.TestCase):
     def test_render_site_html(self):
         self._seed()
         page = cg.render_site_html(cg.build_graph(self.root))
-        self.assertIn('class="card"', page)
-        self.assertIn("anti-legacy:alpha", page)
-        self.assertIn('href="/"', page)  # logo links back to homepage
         self.assertIn("<!DOCTYPE html>", page)
+        self.assertIn('href="/"', page)            # logo links back to homepage
+        self.assertIn("How to execute it", page)   # the 'how to run it' section
+        self.assertIn('id="capq"', page)           # the interactive filter input
+        self.assertIn('cap-item', page)            # filterable capability items
+        self.assertIn("data-hay=", page)           # the refine haystack (agent-style filtering)
+        self.assertIn("anti-legacy:alpha", page)
 
     def test_no_skills_yields_no_capabilities(self):
         self._write("README.md", "# nothing here\n")
