@@ -132,6 +132,16 @@ python3 .anti-legacy/run.py coverage --db .anti-legacy/graphs/<app>.db --out .an
 
 It exits non-zero and prints the unaccounted SymbolIds (your remaining worklist) while coverage `< 1.0`. The risk-flagged nodes are the HITL research queue the team works at Gate 1.
 
+### Phase 3b — Negative extraction (error paths + validations)
+
+```
+"anti-legacy:negative-extraction"
+```
+
+A second extraction pass that captures the **negative** behavior the first pass misses. The first pass reads each node's body and states what it *does*; this pass crawls one or more rings **deeper** into each resolved node's error-handling source — exception handlers, rollback/ABEND, validation guards, SQL error clauses — and re-annotates the *same* node in `.anti-legacy/annotations.jsonl` with source-grounded `error_paths[]` and `validations[]`. Run it after extraction and before graph-translator. Trigger phrases include *"no error paths"*, *"extract error handling"*, *"what should the system reject"*, *"deepen the extraction"*.
+
+It enriches the existing overlay rows (it does not write a new file) and, like extraction, does not advance the phase. Negatives read straight from a source guard are grounded; negatives it can only **derive** (implied by a boundary or a positive rule's inverse, with no explicit guard) are written flagged at lower confidence. Done means the overlay gained at least one `error_path` or `validation`; if zero are found it reports that explicitly rather than passing silently. graph-translator then projects these into `requirements_graph.json`.
+
 ### Phase 4 — Blueprint
 
 ```
@@ -163,6 +173,33 @@ Assembles everything into a single offline Markdown document: architecture diagr
 Output: `.anti-legacy/review_packet.md`
 
 Share this via git push or a fileshare. No external tools needed.
+
+### Optional — the stakeholder deliverables package
+
+```
+"anti-legacy:deliverables"
+```
+
+Once the requirements graph is ready, the `anti-legacy:deliverables` umbrella renders the full stakeholder package into `.anti-legacy/deliverables/` (with a `README.md` index), each piece registered as a manifest artifact — **none of them advances the pipeline**. It runs the sub-skills, or you can run any individually:
+
+- `anti-legacy:prd` — product requirements (`product-requirements.md`)
+- `anti-legacy:diagrams` — Mermaid C4 / ERD / sequence / deployment diagrams
+- `anti-legacy:test-plan` — detailed functional test strategy (data-parity / UAT / E2E / API) + traceability matrix
+- `anti-legacy:test-scripts` — functional test scripts in the target stack
+- `anti-legacy:migration-plan` — epics → stories → tasks → subtasks, Markdown + Jira CSV
+- `anti-legacy:risk-log` / `anti-legacy:decisions-log` / `anti-legacy:evidence-log` — the *living* logs, re-run at each gate
+
+The five Tier-A "snapshot" deliverables (prd, diagrams, test-plan, test-scripts, migration-plan) gate on the producer readiness check below — they refuse on an incomplete pipeline. The three living logs deliberately do not, so they can run anytime to surface gaps.
+
+### Checking phase readiness (precheck)
+
+```bash
+python3 .anti-legacy/run.py precheck <phase>          # e.g. deliverables, blueprint, document
+python3 .anti-legacy/run.py precheck deliverables --advisory   # always exit 0, just report
+python3 .anti-legacy/run.py precheck deliverables --json       # machine-readable probe list
+```
+
+`precheck` is the producer-side readiness gate. It answers "is phase X ready to run?" by checking that the required upstream gates are `passed`/`waived`, the required artifacts are registered + present on disk + checksum-verified, no present artifact has been orphaned by a missing or drifted source (the disk-reality reconcile — e.g. a `requirements_graph.json` that outlived its gitignored `legacy-graph`), and phase completeness holds (every active requirement's `business_rules` carry a numeric `confidence`; coverage ≥ 1.0). It exits `0` when ready, `1` when not (printing each blocker with a one-line fix). The Tier-A deliverable producers call it internally and **refuse** (exit non-zero) when it blocks — resolve the blockers, or pass `--force` to override (not recommended). It is read-only: it never writes `audit.jsonl`, advances a phase, or clears a gate.
 
 ---
 
@@ -236,6 +273,28 @@ git add .anti-legacy/ && git commit -m "gate: GATE_2_PLAN cleared by your-name"
 ```
 
 The evidence id is `task-plan` (the artifact the planner registered) — not `task-md`. With the PASSED-gate evidence guard, citing an unregistered id here would hard-fail the sign-off. Gate 2 requires both reviewers listed in `config.json roles` to have recorded a `passed` opinion before swarm starts.
+
+---
+
+### Phase 7b — Functional tests (shift-left)
+
+```
+"anti-legacy:functional-tests"
+```
+
+After Gate 2 clears but **before** the swarm builds, this authors the executable acceptance tests from your test contracts (shift-left) and hard-gates that every contract is runnable and unambiguous. It emits JUnit 5 for a Java target stack and pytest for Python — one test class/module per contract, one test per scenario — written into the target tree so they ship with the repo. Any other stack returns an explicit "stack not yet supported" error, never a silent pass.
+
+```bash
+# validate the contracts are runnable (hard gate — must exit 0 first)
+python3 .anti-legacy/run.py functional_tests validate --contracts .anti-legacy/contracts
+
+# author the tests for the target stack
+python3 .anti-legacy/run.py functional_tests author \
+  --contracts .anti-legacy/contracts --stack {target_stack} \
+  --output {target_path} --report .anti-legacy/evidence/functional-authoring-report.json
+```
+
+Output: per-stack tests under `{target_path}/src/test/java/acceptance/` (Java) or `{target_path}/tests/acceptance/` (Python) + `.anti-legacy/evidence/functional-authoring-report.json`. The tests are *executed* post-build in `anti-legacy:target-review`, where their results feed GATE_3_BUILD. functional-tests itself has no gate of its own — it is a blocking pre-build pass.
 
 ---
 
@@ -347,6 +406,46 @@ If you are accepting MINOR findings rather than fixing them, name them in the ra
 ```
 --rationale "Accepted UAT-003 (logging format, MINOR) tracked in issue #12. All CRITICAL/MAJOR clear."
 ```
+
+---
+
+### Phase 11b — Document
+
+```
+"anti-legacy:document"
+```
+
+After Gate 4, synthesize the target app's human-facing docs — README, ARCHITECTURE, DEPENDENCIES, ENVIRONMENTS — written **inside the target app directory** so the delivered repo is self-describing. The docs are built *from* the committed artifacts (config / blueprint / requirements graph / target graph), not coined by an LLM, and each is registered + checksum-verified (don't hand-edit after registration — `manifest check` will flag drift).
+
+```bash
+python3 .anti-legacy/run.py document               # reads standard paths, writes to config.target_path, registers all four
+python3 .anti-legacy/run.py document --no-register  # dry run, no manifest touch
+```
+
+Output: `{target_path}/README.md`, `ARCHITECTURE.md`, `DEPENDENCIES.md`, `ENVIRONMENTS.md` (registered as `doc-readme`, `doc-architecture`, `doc-dependencies`, `doc-environments`).
+
+---
+
+### Phase 11c — Final review (completeness gate)
+
+```
+"anti-legacy:final-review"
+```
+
+The last step before deploy. A completeness-review swarm scans the **built** target app for mocked / half-done / incomplete work across four dimensions — **CODE** (stubs, TODOs, `NotImplementedError`, trivial returns), **DOCS** (empty sections, README with no setup/run steps), **CONFIG** (hardcoded test values, placeholder secrets), **BUILD** (skipped/disabled tests, skip-tests flags) — one parallel reviewer per dimension over the deterministic `completeness_scanner`. It runs last, so it reviews the docs and functional tests too.
+
+```bash
+# per dimension (one reviewer each)
+python3 .anti-legacy/run.py completeness_scanner --workspace {target_path} \
+  --dimension CODE --output .anti-legacy/evidence/completeness-CODE.json
+# … repeat for DOCS, CONFIG, BUILD …
+
+# consolidate (exits 0 on PASS, non-zero on FAIL)
+python3 .anti-legacy/run.py completeness_scanner --workspace {target_path} \
+  --output .anti-legacy/evidence/completeness-report.json
+```
+
+Output: `.anti-legacy/evidence/completeness-report.json` (`status: PASS|FAIL` + severity/dimension counts). **GATE_5_COMPLETENESS auto-clears only on PASS** (zero HIGH findings) — no human sign-off. On any HIGH finding it does NOT clear; it kicks back to the phase that owns the gap (a CODE/BUILD stub re-dispatches `anti-legacy:swarm`; a DOCS gap re-runs doc-authoring; a CONFIG gap fixes config or kicks back to `anti-legacy:blueprint`), regenerates, and re-runs — not a full pipeline restart.
 
 ---
 
