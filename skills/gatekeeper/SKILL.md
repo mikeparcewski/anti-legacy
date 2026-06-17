@@ -2,10 +2,11 @@
 name: "anti-legacy:gatekeeper"
 description: >
   Enforce transition gates. Verify that required sign-offs and evidence exist before
-  the pipeline can advance. Eight gates: GATE_0_DISCOVERY (automated survey integrity),
+  the pipeline can advance. Nine gates: GATE_0_DISCOVERY (automated survey integrity),
   GATE_1_DESIGN (design review), GATE_1B_SEMANTIC_JOIN (semantic-join review),
   GATE_2_PLAN (plan review), GATE_3_BUILD (automated build integrity + round-trip
-  rule-coverage), GATE_3B_SEMANTIC (semantic validation review), GATE_4_UAT
+  rule-coverage), GATE_3B_SEMANTIC (semantic validation review), GATE_3C_DIFFERENTIAL
+  (automated executed output-parity vs a golden legacy corpus), GATE_4_UAT
   (UAT acceptance, reviewer-independence enforced), GATE_5_COMPLETENESS (automated
   final completeness gate). A `failed` opinion on any gate triggers a generalized,
   guided kick-back that rewinds the pipeline to the gate's producing phase.
@@ -26,7 +27,7 @@ and Windows Git Bash. Evidence verification uses `manifest.py check`.
 
 ## Parameters
 
-- **gate_id** (required): one of `GATE_0_DISCOVERY`, `GATE_1_DESIGN`, `GATE_1B_SEMANTIC_JOIN`, `GATE_2_PLAN`, `GATE_3_BUILD`, `GATE_3B_SEMANTIC`, `GATE_4_UAT`, `GATE_5_COMPLETENESS`
+- **gate_id** (required): one of `GATE_0_DISCOVERY`, `GATE_1_DESIGN`, `GATE_1B_SEMANTIC_JOIN`, `GATE_2_PLAN`, `GATE_3_BUILD`, `GATE_3B_SEMANTIC`, `GATE_3C_DIFFERENTIAL`, `GATE_4_UAT`, `GATE_5_COMPLETENESS`
 - **action**: `check` (default) — verify gate status | `record` — record a sign-off | `status` — print all gates
 
 ## Gate Definitions
@@ -39,6 +40,7 @@ and Windows Git Bash. Evidence verification uses `manifest.py check`.
 | `GATE_2_PLAN` | After planner | task-plan, blueprint-json | PM + Tech Lead |
 | `GATE_3_BUILD` | After target-review | build-integrity (PASS) + functional-comparison-report (0 FAIL, coverage>=1.0) | Automated — no human required |
 | `GATE_3B_SEMANTIC`| After semantic-validation| semantic-validation-report | Lead Architect + Tech Lead |
+| `GATE_3C_DIFFERENTIAL` | After build, when a golden corpus exists | differential-equivalence-report (status PASS or NOT_APPLICABLE) | Automated — no human required (vacuous-safe; NOT in the advance-precondition map) |
 | `GATE_4_UAT` | After uat-crew | uat-summary, uat-verdicts (both registered by uat-crew) | UAT Lead (independent of architect — HARD FAIL if same) |
 | `GATE_5_COMPLETENESS` | After document, at `final-review` | completeness-report (status PASS) | Automated — no human required |
 
@@ -60,6 +62,7 @@ names the skill but does NOT auto-dispatch it. This applies to ALL gates:
 | `GATE_2_PLAN` | `planning` | `anti-legacy:planner` |
 | `GATE_3_BUILD` | `build` | `anti-legacy:swarm` |
 | `GATE_3B_SEMANTIC` | `semantic-validation` | `anti-legacy:semantic-validation` |
+| `GATE_3C_DIFFERENTIAL` | `build` | `anti-legacy:swarm` (rebuild to fix the divergence, then re-run `anti-legacy:differential-equivalence`) |
 | `GATE_4_UAT` | `uat` | `anti-legacy:uat-crew` |
 | `GATE_5_COMPLETENESS` | `document` | `anti-legacy:document` |
 

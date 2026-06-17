@@ -74,6 +74,11 @@ GATE_PRODUCING_PHASE = {
     "GATE_2_PLAN": ("planning", "anti-legacy:planner"),
     "GATE_3_BUILD": ("build", "anti-legacy:swarm"),
     "GATE_3B_SEMANTIC": ("semantic-validation", "anti-legacy:semantic-validation"),
+    # ISS-7: automated executed-parity gate, modeled on GATE_0_DISCOVERY — recordable +
+    # kick-back-capable here, but intentionally NOT in GATE_PHASE_PRECONDITIONS (no dedicated
+    # gate-* phase), so a pipeline with no golden corpus is never blocked (vacuous-safe). A
+    # FAIL means the target's outputs diverge from the legacy golden -> rewind to `build`.
+    "GATE_3C_DIFFERENTIAL": ("build", "anti-legacy:swarm"),
     "GATE_4_UAT": ("uat", "anti-legacy:uat-crew"),
     "GATE_5_COMPLETENESS": ("document", "anti-legacy:document"),
 }
