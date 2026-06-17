@@ -135,6 +135,7 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 | Indexing legacy source into the code graph (any language, mainframe or modern) | `anti-legacy:survey` |
 | Structural analysis of the code graph | `anti-legacy:analyze` |
 | Extracting business rules (crawl + annotate + coverage) | `anti-legacy:extraction` |
+| Extracting error paths + negative requirements (deepen the crawl, after extraction) | `anti-legacy:negative-extraction` |
 | Re-thinking annotated rules into the domain graph (§I5) | `anti-legacy:graph-translator` |
 | Designing target architecture | `anti-legacy:blueprint` |
 | Writing test contracts per requirement | `anti-legacy:test-strategy` |

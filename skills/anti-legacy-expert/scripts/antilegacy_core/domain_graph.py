@@ -661,6 +661,56 @@ def _rule_object(rule_id, statement, symbol_id, app_name, annotation):
     return obj
 
 
+def _seq_id(prefix, entry, seq):
+    """Preserve an extractor-authored VAL-/ERR- id (keeps error_ref cross-links
+    intact); otherwise generate a schema-legal sequential id."""
+    cand = entry.get("id")
+    if isinstance(cand, str) and cand.startswith(prefix + "-"):
+        tail = cand[len(prefix) + 1:]
+        if tail.isdigit() and 3 <= len(tail) <= 6:
+            return cand
+    return "%s-%03d" % (prefix, seq)
+
+
+def _validation_object(entry, app_name, seq):
+    """Schema-legal `validation` item from an overlay entry (negative-extraction).
+    Required {id, statement}; field/error_ref/confidence optional; provenance carries
+    source_app + the per-item source_kinds trust grounding (GOTCHA-3)."""
+    obj = {"id": _seq_id("VAL", entry, seq),
+           "statement": (entry.get("statement") or "").strip() or "RISK"}
+    if entry.get("field"):
+        obj["field"] = str(entry["field"])
+    er = entry.get("error_ref")
+    if isinstance(er, str) and er.startswith("ERR-"):
+        obj["error_ref"] = er
+    conf = _clamp_conf(entry.get("confidence"))
+    if conf is not None:
+        obj["confidence"] = round(conf, 6)
+    prov = {"source_app": app_name}
+    kinds = _clean_source_kinds(entry.get("source_kinds"))
+    if kinds:
+        prov["source_kinds"] = kinds
+    obj["provenance"] = prov
+    return obj
+
+
+def _error_path_object(entry, app_name, seq):
+    """Schema-legal `error_path` item from an overlay entry (negative-extraction)."""
+    obj = {"id": _seq_id("ERR", entry, seq),
+           "statement": (entry.get("statement") or "").strip() or "RISK"}
+    if entry.get("code"):
+        obj["code"] = str(entry["code"])
+    conf = _clamp_conf(entry.get("confidence"))
+    if conf is not None:
+        obj["confidence"] = round(conf, 6)
+    prov = {"source_app": app_name}
+    kinds = _clean_source_kinds(entry.get("source_kinds"))
+    if kinds:
+        prov["source_kinds"] = kinds
+    obj["provenance"] = prov
+    return obj
+
+
 # ---------------------------------------------------------------------------
 # Sub-partition an oversized community by file/package prefix.
 # ---------------------------------------------------------------------------
@@ -933,6 +983,22 @@ def build_requirement(app: dict, label, member_ids, settings):
     )
     title = domain_name.replace("Capability", "").strip() or "Capability"
 
+    # Project error_paths + validations from the overlay (populated by
+    # anti-legacy:negative-extraction). Each rides through losslessly via the
+    # --rule-object overlay; here we make them schema-legal + assign/keep ids.
+    validations, error_paths = [], []
+    _v_seq = _e_seq = 0
+    for _sid in member_ids:
+        _ann = annotations.get(_sid) or {}
+        for _entry in (_ann.get("validations") or []):
+            if isinstance(_entry, dict):
+                _v_seq += 1
+                validations.append(_validation_object(_entry, app_name, _v_seq))
+        for _entry in (_ann.get("error_paths") or []):
+            if isinstance(_entry, dict):
+                _e_seq += 1
+                error_paths.append(_error_path_object(_entry, app_name, _e_seq))
+
     requirement = {
         "title": title,
         "description": description,
@@ -940,8 +1006,8 @@ def build_requirement(app: dict, label, member_ids, settings):
         "data_access": data_access,
         "dependencies": [],                          # filled after all reqs exist
         "business_rules": rule_objects,
-        "validations": [],
-        "error_paths": [],
+        "validations": validations,
+        "error_paths": error_paths,
         "status": status,
         "merged_programs": sorted(member_names),
         # --- additive §I5 fields (schema-legal: requirement object is not
