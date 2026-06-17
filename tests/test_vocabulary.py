@@ -39,18 +39,18 @@ import unittest
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPTS_DIR = os.path.join(REPO_ROOT, "scripts")
 SCHEMAS_DIR = os.path.join(REPO_ROOT, "schemas")
-VOCAB_PATH = os.path.join(SCRIPTS_DIR, "vocabulary.py")
+VOCAB_PATH = os.path.join(os.path.dirname(SCRIPTS_DIR), "skills", "anti-legacy-expert", "scripts", "antilegacy_core", "vocabulary.py")
 SCHEMA_PATH = os.path.join(SCHEMAS_DIR, "vocabulary.schema.json")
 
-if SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, SCRIPTS_DIR)
+# SCRIPTS_DIR intentionally NOT added to sys.path (migrated modules resolve
+# via tests/conftest.py); SCRIPTS_DIR retained only for by-path shim guards.
 
 
 def _load_vocab():
     if not os.path.isfile(VOCAB_PATH):
         return None
     try:
-        return importlib.import_module("vocabulary")
+        return importlib.import_module("antilegacy_core.vocabulary")
     except Exception:
         return None
 
@@ -320,7 +320,7 @@ class TestCLISubprocess(unittest.TestCase):
 
     def test_subprocess_emits_valid_vocabulary(self):
         proc = subprocess.run(
-            [sys.executable, VOCAB_PATH, "--db", self._db, "--config", self._cfg,
+            [sys.executable, "-m", "antilegacy_core.vocabulary", "--db", self._db, "--config", self._cfg,
              "--out", self._out, "--min-freq", "1"],
             capture_output=True, text=True, cwd=self._tmp,
         )
@@ -345,7 +345,7 @@ class TestCLISubprocess(unittest.TestCase):
 
     def test_subprocess_missing_db_exits_2(self):
         proc = subprocess.run(
-            [sys.executable, VOCAB_PATH, "--db", os.path.join(self._tmp, "nope.db"),
+            [sys.executable, "-m", "antilegacy_core.vocabulary", "--db", os.path.join(self._tmp, "nope.db"),
              "--config", self._cfg, "--out", self._out],
             capture_output=True, text=True, cwd=self._tmp,
         )
@@ -599,7 +599,7 @@ class TestCheckProjection(unittest.TestCase):
 # interface entity miner, accessor-verb skip). These prove the glossary now
 # yields real domain terms from modern OO code, not one opaque token.
 # ===========================================================================
-import vocabulary as _voc  # noqa: E402
+from antilegacy_core import vocabulary as _voc  # noqa: E402
 
 
 def _java_node(symid, name, kind, file="src/Producer.java"):

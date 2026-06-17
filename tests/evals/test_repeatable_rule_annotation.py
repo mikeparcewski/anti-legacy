@@ -38,7 +38,7 @@ import pytest
 # Helpers
 # --------------------------------------------------------------------------- #
 def _templates_dir(repo_root):
-    return os.path.join(repo_root, "templates")
+    return os.path.join(repo_root, "skills", "developer", "assets")
 
 
 def _read_template(repo_root, name):

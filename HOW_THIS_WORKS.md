@@ -129,7 +129,7 @@ The native `requirement` field is the in-graph evidence projection (it makes `wi
 
 ## Coverage: the provable terminal
 
-Because every behavior-bearing node ends RESOLVED or RISK-flagged, extraction has a **provable definition of done**: coverage. `scripts/coverage.py` computes
+Because every behavior-bearing node ends RESOLVED or RISK-flagged, extraction has a **provable definition of done**: coverage. `run.py coverage` (the `antilegacy_core.coverage` module) computes
 
 ```
 coverage = (resolved + risk_flagged) / behavior_bearing_total
@@ -216,8 +216,8 @@ All pipeline skills call their scripts through a single dispatcher — `python3 
 ### Phase 1: Setup
 *   **Purpose**: Initializes the modernization workspace and records project configurations.
 *   **Inputs & References**:
-    *   `templates/manifest.json` (scaffolds the initial project manifest)
-    *   `templates/anti_patterns.md` (seeded into the git-brain to prevent line-by-line or microservice anti-patterns)
+    *   the manifest template (package data in `antilegacy_core`) (scaffolds the initial project manifest)
+    *   `skills/setup/references/anti_patterns.md` (seeded into the git-brain to prevent line-by-line or microservice anti-patterns)
 *   **Outputs & Deliverables**:
     *   `.anti-legacy/manifest.json` (project status state)
     *   `.anti-legacy/config.json` (source application paths and target stack selection)
@@ -287,7 +287,7 @@ All pipeline skills call their scripts through a single dispatcher — `python3 
 *   **Purpose**: Designs the modern target stack architecture, file structures, and database schemas.
 *   **Inputs & References**:
     *   `requirements-graph`
-    *   `templates/nfrs.md` (copied and customized into target Non-Functional Requirements)
+    *   `skills/blueprint/references/nfrs.md` (copied and customized into target Non-Functional Requirements)
     *   Git-brain query: `{target_stack} architecture patterns blueprint structure`
 *   **Outputs & Deliverables**:
     *   `.anti-legacy/requirements/blueprint.json` (target architecture model)

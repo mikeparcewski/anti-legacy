@@ -8,7 +8,7 @@ import shutil
 import subprocess
 
 # Adjust path to find scripts
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
+# legacy scripts/ insert removed — leaf modules resolved via tests/conftest.py
 
 
 class TestPacketGeneratorValid(unittest.TestCase):
@@ -276,7 +276,7 @@ class TestPacketGeneratorCLI(unittest.TestCase):
     def test_cli_produces_markdown(self):
         output_path = os.path.join(self.tmpdir, "output", "packet.md")
         result = subprocess.run(
-            [sys.executable, os.path.join(self.scripts_dir, 'packet_generator.py'),
+            [sys.executable, "-m", "packet_generator",
              '--input', self.input_path, '--output', output_path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
@@ -294,7 +294,7 @@ class TestPacketGeneratorCLI(unittest.TestCase):
 
     def test_cli_bad_input(self):
         result = subprocess.run(
-            [sys.executable, os.path.join(self.scripts_dir, 'packet_generator.py'),
+            [sys.executable, "-m", "packet_generator",
              '--input', '/nonexistent/path.json',
              '--output', os.path.join(self.tmpdir, 'out.md')],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
@@ -304,7 +304,7 @@ class TestPacketGeneratorCLI(unittest.TestCase):
 
     def test_cli_missing_args(self):
         result = subprocess.run(
-            [sys.executable, os.path.join(self.scripts_dir, 'packet_generator.py')],
+            [sys.executable, "-m", "packet_generator"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         self.assertNotEqual(result.returncode, 0,

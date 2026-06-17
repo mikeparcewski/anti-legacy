@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 # Import merge helpers for unit testing
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "setup", "scripts"))
 from git_brain import (
     _merge_sections,
     _extract_conflict_sides,
@@ -53,7 +53,7 @@ class TestGitBrain(unittest.TestCase):
 
     def _brain(self, *args):
         """Run git_brain.py with args in the test directory."""
-        cmd = [sys.executable, self.brain_script] + list(args)
+        cmd = [sys.executable, "-m", "git_brain"] + list(args)
         result = subprocess.run(
             cmd, cwd=self.test_dir,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

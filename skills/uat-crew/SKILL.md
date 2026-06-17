@@ -62,7 +62,7 @@ For each node, locate:
 For each domain (or in parallel for all domains), dispatch a UAT reviewer:
 
 ```
-@uat_reviewer
+anti-legacy:uat-reviewer
 
 ## UAT Assignment — {domain}: {req_id}
 

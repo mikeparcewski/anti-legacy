@@ -18,7 +18,7 @@ import sys
 import tempfile
 import unittest
 
-from scripts.completeness_scanner import (
+from completeness_scanner import (
     build_report,
     scan_tree,
     write_report,
@@ -303,7 +303,7 @@ class TestCompletenessScanner(unittest.TestCase):
     def test_cli_subprocess_exit_code(self):
         out = os.path.join(self.tmp, "ev-sub.json")
         proc = subprocess.run(
-            [sys.executable, SCRIPT, "--workspace", self.dirty,
+            [sys.executable, "-m", "completeness_scanner", "--workspace", self.dirty,
              "--output", out, "--quiet"],
             capture_output=True, text=True,
         )

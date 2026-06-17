@@ -7,7 +7,7 @@ import os
 import sys
 
 # Add scripts directory to sys.path so we can import test_runner
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts"))
+# legacy scripts/ insert removed — leaf modules resolved via tests/conftest.py
 from test_runner import TestRunner
 
 class TestTestRunner(unittest.TestCase):

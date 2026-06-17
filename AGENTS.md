@@ -21,7 +21,7 @@ Factual. Surface findings, name the file and the line. Do not soften gaps.
 
 ## Deliverables
 
-Every phase produces exactly one primary artifact. Each producing skill documents that artifact's field schema and done-gate assertions — produce them or flag why you cannot. Full JSON Schemas live under `schemas/`; the enriched requirements profile is `schemas/requirements-graph.enriched.schema.json`, gate-validated.
+Every phase produces exactly one primary artifact. Each producing skill documents that artifact's field schema and done-gate assertions — produce them or flag why you cannot. Full JSON Schemas ship as package data under `antilegacy_core/schemas/` (in the `anti-legacy-expert` skill); the enriched requirements profile is `requirements-graph.enriched.schema.json`, gate-validated.
 
 | Artifact | Schema + assertions live in |
 |---|---|
@@ -139,6 +139,15 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 | Designing target architecture | `anti-legacy:blueprint` |
 | Writing test contracts per requirement | `anti-legacy:test-strategy` |
 | Compiling team review document | `anti-legacy:review-packet` |
+| Producing the stakeholder deliverables package (graph ready → PRD, diagrams, test strategy + scripts, migration plan, risk/decisions/evidence logs) | `anti-legacy:deliverables` |
+| Detailed product requirements (PRD) | `anti-legacy:prd` |
+| Architecture diagrams (Mermaid) | `anti-legacy:diagrams` |
+| Detailed functional test strategy (data-parity / UAT / E2E / API) | `anti-legacy:test-plan` |
+| Functional test scripts (data-parity / UAT / E2E / API) | `anti-legacy:test-scripts` |
+| End-to-end migration plan (epics→stories→tasks→subtasks + Jira CSV) | `anti-legacy:migration-plan` |
+| Risk log / register | `anti-legacy:risk-log` |
+| Design decisions log (ADRs) | `anti-legacy:decisions-log` |
+| Phase evidence log with receipts | `anti-legacy:evidence-log` |
 | Checking / recording a gate | `anti-legacy:gatekeeper` |
 | Creating build task list | `anti-legacy:planner` |
 | Building target code | `anti-legacy:swarm` |
@@ -147,14 +156,18 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 | Driving the pipeline phase-to-phase | `anti-legacy:orchestrate` |
 | Running UAT | `anti-legacy:uat-crew` |
 | Generating deployment artifacts | `anti-legacy:deploy` |
+| Translating one requirement → target code + tests (dispatched by swarm) | `anti-legacy:developer` |
+| Independent read-only UAT review of a domain (dispatched by uat-crew) | `anti-legacy:uat-reviewer` |
+| Code-graph engine capability + availability (index / query / annotate) | `anti-legacy:wicked-estate` |
+| Pipeline internals SME + home of the shared `antilegacy_core` library | `anti-legacy:expert` |
 
 ---
 
 ## Key Scripts
 
-All scripts are invoked through the workspace dispatcher: `python3 .anti-legacy/run.py <script-stem> <args...>`. Never call `python3 scripts/<x>.py` directly — `scripts/` is not on the workspace path; `run.py` resolves the script under the baked-in plugin root.
+All scripts are invoked through the workspace dispatcher: `python3 .anti-legacy/run.py <script-stem> <args...>`. The shared core lives in the namespaced `antilegacy_core` library (hosted by the `anti-legacy-expert` skill); single-owner leaf scripts live in their owning skill's `scripts/`. `run.py` discovers the installed library and dispatches each stem as `python -m antilegacy_core.<stem>` (shared core) or `skills/*/scripts/<stem>.py` (leaf) — never call a script by file path.
 
-**Dispatcher carve-out (two exemptions).** Two callers are exempt from the dispatcher rule because `run.py` does not apply to them: (1) `anti-legacy:setup` runs at bootstrap, *before* `run.py` exists — it calls the plugin-root scripts by absolute path to write `run.py` and initialize the manifest. (2) the `develop-plugin` skill operates on the plugin **source tree itself**, not a workspace, so there is no `.anti-legacy/run.py` to dispatch through; it invokes scripts directly under the plugin root. Every other caller, in every workspace, must go through `.anti-legacy/run.py`.
+**Dispatcher carve-out (two exemptions).** Two callers are exempt from the dispatcher rule because `run.py` does not apply to them: (1) `anti-legacy:setup` runs at bootstrap, *before* `run.py` exists — it runs `python -m antilegacy_core.manifest init` (with `PYTHONPATH` at the library's parent, `skills/anti-legacy-expert/scripts`) to seed the manifest, then writes `run.py` from its bundled `assets/run.py.tmpl`. (2) the `develop-plugin` skill operates on the plugin **source tree itself**, not a workspace, so there is no `.anti-legacy/run.py` to dispatch through; it invokes scripts directly under the plugin root. Every other caller, in every workspace, must go through `.anti-legacy/run.py`.
 
 | Script (stem) | Purpose | Never use for |
 |---|---|---|
@@ -169,4 +182,4 @@ All scripts are invoked through the workspace dispatcher: `python3 .anti-legacy/
 `python3 .anti-legacy/run.py manifest status` is the authoritative pipeline state. File presence is not.
 
 ### Dispatcher
-`.anti-legacy/run.py` is a thin exec shim written by `anti-legacy:setup` at init time, with the resolved **absolute** plugin root baked in, so it always finds the real script at `<plugin_root>/scripts/<stem>.py`. The CWD is always the workspace, so `.anti-legacy/run.py` resolves relative to it on macOS/Linux/WSL/Windows alike — pure Python, no shell features. The `<script-stem>` is the bare name: no `scripts/` prefix, no `.py` suffix (`manifest`, `validator_discovery`, `git_brain`). Do not hand-edit `run.py`; re-run setup if the plugin root moves.
+`.anti-legacy/run.py` is a thin exec shim written by `anti-legacy:setup` at init time. It **discovers** the bundled `antilegacy_core` library across install shapes and CLIs (a `.*/skills/*/scripts/antilegacy_core` glob — plugin install, `npx skills` flat install, or source tree), then dispatches a bare stem as `python -m antilegacy_core.<stem>` (shared core) or `skills/*/scripts/<stem>.py` (leaf), with the library parent on `PYTHONPATH`. The CWD is always the workspace, so `.anti-legacy/run.py` resolves relative to it on macOS/Linux/WSL/Windows alike — pure Python, no shell features. The `<script-stem>` is the bare name: no `scripts/` prefix, no `.py` suffix (`manifest`, `validator_discovery`, `git_brain`). Do not hand-edit `run.py`; re-run setup if the plugin root moves.

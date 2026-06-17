@@ -14,7 +14,7 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../skills/document/scripts')))
 
 import document  # noqa: E402
 
@@ -321,7 +321,7 @@ class TestSynthesizeApi(unittest.TestCase):
 
     def test_registered_path_resolves_under_anti_legacy_anchor(self):
         """The stored path must resolve to the real file via manifest's anchor rule."""
-        import manifest as mf
+        from antilegacy_core import manifest as mf
         with open(self.paths["manifest"]) as f:
             m = json.load(f)
         anti_legacy_dir = os.path.dirname(os.path.abspath(self.paths["manifest"]))
@@ -460,7 +460,7 @@ class TestCli(unittest.TestCase):
 
     def test_cli_writes_and_registers(self):
         result = subprocess.run(
-            [sys.executable, os.path.join(SCRIPTS_DIR, "document.py"),
+            [sys.executable, "-m", "document",
              "--config", self.paths["config"],
              "--blueprint", self.paths["blueprint"],
              "--requirements", self.paths["requirements"],
@@ -477,7 +477,7 @@ class TestCli(unittest.TestCase):
 
     def test_cli_no_register_flag(self):
         result = subprocess.run(
-            [sys.executable, os.path.join(SCRIPTS_DIR, "document.py"),
+            [sys.executable, "-m", "document",
              "--config", self.paths["config"],
              "--blueprint", self.paths["blueprint"],
              "--requirements", self.paths["requirements"],
@@ -500,7 +500,7 @@ class TestCli(unittest.TestCase):
         with open(self.paths["target_graph"], "w") as f:
             json.dump({"domains": {}}, f)
         result = subprocess.run(
-            [sys.executable, os.path.join(SCRIPTS_DIR, "document.py"),
+            [sys.executable, "-m", "document",
              "--config", self.paths["config"],
              "--blueprint", self.paths["blueprint"],
              "--requirements", self.paths["requirements"],

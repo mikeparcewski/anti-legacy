@@ -4,7 +4,7 @@ Unit tests for planner traversal strategies.
 Verifies Bottom-Up, Top-Down, and Vertical Slice ordering.
 """
 import unittest
-from scripts.planner_utils import sort_requirements
+from antilegacy_core.planner_utils import sort_requirements
 
 class TestPlannerTraversal(unittest.TestCase):
     def test_empty_graph(self):
@@ -127,7 +127,7 @@ class TestPlannerTraversal(unittest.TestCase):
             }
         }
         
-        from scripts.planner_utils import verify_order
+        from antilegacy_core.planner_utils import verify_order
         
         # Test 1: Valid Bottom-Up (A scheduled before B)
         with open(task_path, 'w') as f:

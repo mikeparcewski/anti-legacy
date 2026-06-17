@@ -42,13 +42,25 @@ wicked-estate --version
 
 ### Install the plugin
 
-```bash
-# As Antigravity plugin (recommended)
-cp -r anti-legacy/ ~/.gemini/antigravity-ide/plugins/anti-legacy/
+Portable install — any CLI (Claude Code, Cursor, Codex, Gemini/Antigravity …) via the [skills standard](https://skills.sh). Installs all skills **and** the bundled `antilegacy_core` library in one step:
 
-# Or workspace-specific
-cp -r anti-legacy/ .agents/plugins/anti-legacy/
+```bash
+npx skills add mikeparcewski/anti-legacy --all
 ```
+
+> Use `--all` (it expands to every skill + every detected agent). A bare `--skill '*'` installs **nothing** — use `--all`.
+
+Or install as a native plugin (ships the whole repo):
+
+```bash
+# Claude Code
+/plugin install anti-legacy                # from a marketplace, or point at a local clone
+
+# Gemini / Antigravity
+gemini extensions install https://github.com/mikeparcewski/anti-legacy
+```
+
+All methods deliver the same bundle. `anti-legacy:setup` then writes the workspace dispatcher `.anti-legacy/run.py`, which **discovers the installed `antilegacy_core` library automatically** (no path baking, no `pip install` of the core) and dispatches each script as `python -m antilegacy_core.<stem>` (shared core) or a skill-local `scripts/<stem>.py` (leaf).
 
 **Python dependencies**: `GATE_1_DESIGN` and the T3 schema evals validate the requirements graph against the enriched profile, which needs `jsonschema`. Install it with:
 
@@ -84,6 +96,23 @@ Eight gates: **GATE 0** (discovery, auto — survey integrity), **GATE 1** (desi
 Or run individual phases: `anti-legacy:setup`, `anti-legacy:survey`, etc.
 
 ---
+
+## Deliverables
+
+Once the requirements graph is ready, **`anti-legacy:deliverables`** renders the full
+stakeholder package into `.anti-legacy/deliverables/` — each registered in the manifest, nothing
+advancing the pipeline:
+
+- **Product requirements** — `product-requirements.md` (`anti-legacy:prd`)
+- **Architecture diagrams** — Mermaid C4 / ERD / sequence / deployment (`anti-legacy:diagrams`)
+- **Test strategy** — data-parity / UAT / E2E / API, with a traceability matrix (`anti-legacy:test-plan`)
+- **Functional test scripts** — the same four types, in the target stack (`anti-legacy:test-scripts`)
+- **Migration plan** — epics→stories→tasks→subtasks (prep→build→deploy→test), Markdown + Jira CSV (`anti-legacy:migration-plan`)
+- **Risk log**, **decisions log (ADRs)**, **evidence log with receipts** — *living* deliverables, re-run at each gate (`anti-legacy:risk-log`, `anti-legacy:decisions-log`, `anti-legacy:evidence-log`)
+
+`anti-legacy:deliverables` runs them all and writes a `deliverables/README.md` index. They
+complement the `review-packet` (the single GATE_1 review doc) and reuse the pipeline's existing
+structured artifacts rather than duplicating them.
 
 ## Language support
 
@@ -138,13 +167,22 @@ python3 -m unittest discover -s tests -v
 
 ```
 anti-legacy/
-├── plugin.json      plugin manifest
-├── agents/          @developer (build subagent), @uat_reviewer (read-only)
-├── scripts/         manifest.py, git_brain.py, wicked_estate.py, coverage.py, ...
-├── skills/          19 skills — one per phase + extraction + orchestrate (master)
-├── schemas/         JSON schemas for all artifact types
-├── demo/            3 COBOL programs for end-to-end testing
-├── tests/           unit + integration + demo pipeline tests
-├── HOW_THIS_WORKS.md
-└── HOW_TO_USE.md
+├── plugin.json, gemini-extension.json   plugin + extension manifests
+├── AGENTS.md  (← CLAUDE.md, GEMINI.md are symlinks)   the agent contract
+├── skills/                              ~27 skills — the whole bundle
+│   ├── anti-legacy-expert/              internals SME + the shared library:
+│   │   └── scripts/antilegacy_core/       manifest, wicked_estate (engine seam),
+│   │       coverage, extract, domain_graph, validator, … + schemas/ (package data)
+│   ├── developer/, uat-reviewer/        build + independent-review skills (were agents/)
+│   ├── setup/  (assets/run.py.tmpl, references/…)   bootstrap + folded templates
+│   ├── survey/ analyze/ extraction/ blueprint/ … orchestrate/   phase skills,
+│   │                                    each owning its single-consumer leaf scripts/
+│   └── wicked-estate/                   the engine capability + availability skill
+├── demo/legacy-src/   COBOL programs for end-to-end testing
+└── tests/             unit + integration + demo pipeline tests
 ```
+
+> The migration moved all Python into skills: shared code lives in the namespaced
+> `antilegacy_core` library (hosted by `anti-legacy-expert`, shipped as package data),
+> and single-owner leaf scripts live in their owning skill's `scripts/`. There is no
+> top-level `scripts/`, `agents/`, `templates/`, or `schemas/` directory.

@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "anti-legacy Audit Event",
+  "description": "A single line in audit.jsonl. Every pipeline action produces one.",
+  "type": "object",
+  "required": ["event", "timestamp", "details"],
+  "properties": {
+    "event": {
+      "type": "string",
+      "description": "Namespaced event ID (e.g. 'anti-legacy:survey-completed', 'anti-legacy:gate-signed-off')."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "details": {
+      "type": "object",
+      "description": "Event-specific payload.",
+      "properties": {
+        "gate_id": { "type": "string" },
+        "opinion": { "type": "string", "enum": ["PASS", "FAIL", "WAIVED"] },
+        "evaluator": { "type": "string" },
+        "rationale": { "type": "string" },
+        "applications_scanned": { "type": "array", "items": { "type": "string" } },
+        "task": { "type": "string" },
+        "result_file": { "type": "string" },
+        "file": { "type": "string" },
+        "artifact_id": { "type": "string" }
+      }
+    }
+  }
+}
