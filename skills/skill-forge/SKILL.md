@@ -56,6 +56,18 @@ skill contains:
   **business rules** (with their `RULE-`/`VAL-`/`ERR-` ids to annotate), the **legacy provenance**
   (§2 traceability), and the **data model** with `source_type` parity (COMP-3/DECIMAL).
 
+## Step 1.5: Adversarially review the generated skills (same critic as the deliverables)
+
+Before any code is built from them, subject each generated `build-<domain>` skill to the **same
+adversarial review** the deliverables get — run `anti-legacy:adversarial-review` over
+`.anti-legacy/generated-skills/`. A read-only critic challenges each generated skill: is every
+component grounded in the blueprint + requirements (no behavior invented beyond the spec)? is the
+§2 trace (req_id → legacy_components → rule) intact? is COMP-3/DECIMAL parity preserved? is the
+build order sound? It returns a per-skill verdict (findings + PASS / REVISE / BLOCK). Fix the
+upstream (regenerate from a corrected blueprint/graph) before the agent builds from a BLOCK'd
+skill. Advisory — it never clears a gate. (A generated skill is AI-derived output, so it gets the
+same critic treatment as every other generated artifact.)
+
 ## Step 2: Build the target by FOLLOWING the generated skills
 
 To build a capability, the agent reads + follows the matching generated skill — e.g. *"build the
