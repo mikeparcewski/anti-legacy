@@ -292,6 +292,29 @@ Tell the user:
   `python3 .anti-legacy/run.py manifest gate GATE_2_PLAN --opinion passed --evaluator "<reviewer>" --rationale "<note>" --evidence task-plan`
   (the `task-plan` artifact is the GATE_2_PLAN evidence), then run `anti-legacy:swarm`
 
+## Step 9: Adversarially self-review the task plan (advisory — AGENTS.md §8)
+
+The Step 8 done-gate is mechanical — it counts tasks against active requirements,
+checks every task carries hours, and verifies no dependency points at a later layer. It
+cannot see a task whose hours are wildly under-scoped for its rule count, a layer
+assignment that misreads a service as a model, or a build order that will deadlock the
+swarm. Before you report done, adversarially review the `task.md` you just produced —
+the topological check is trusting; this is the loop that distrusts it. Resolve the
+single-artifact critic target, then dispatch the read-only critic against it:
+
+```bash
+python3 .anti-legacy/run.py refine_loop descriptor --artifact task-plan --json
+```
+
+That resolves the rendered file + the source data the critic must cross-check (the
+requirements-graph §2 spine + this artifact's manifest `depends_on` — the blueprint).
+Dispatch `anti-legacy:adversarial-review` (single-artifact mode) against the descriptor.
+On `REVISE`/`BLOCK`, run the bounded loop — `refine_loop decide --verdict <v> --attempt
+<n> --artifact task-plan` — re-running `anti-legacy:planner` to fix at source and
+re-reviewing, capped at §7's three attempts (then recon), or proceed under a **stated**
+`--forced` override. **Advisory: it clears no gate (GATE_2_PLAN is still a human
+sign-off) and advances no phase.**
+
 ## Output
 
 - `.anti-legacy/task.md` — ordered, layered task list with completion checkboxes

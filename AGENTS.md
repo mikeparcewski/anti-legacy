@@ -115,6 +115,9 @@ Status reports state: (1) what is verifiably true with evidence, (2) what is NOT
 ### §7 — Three failures, then recon
 After 3 failed attempts at the same problem: stop. Send a read-only recon agent before attempt 4. The third failure is evidence the model of the problem is wrong, not the fix.
 
+### §8 — Every producer self-reviews its output (advisory)
+Every producer runs an **advisory adversarial review** on its primary artifact at its done-gate — *before* declaring done — because every artifact in this pipeline is rendered/derived from upstream data and the render is trusting. Use `anti-legacy:adversarial-review` in **single-artifact mode**: `refine_loop descriptor --artifact <id>` resolves the rendered file + the source data the critic cross-checks (the requirements-graph §2 spine + the artifact's manifest `depends_on`); dispatch the read-only critic against it. On `REVISE`/`BLOCK`, run the **bounded loop** (`refine_loop decide --verdict … --attempt …`): re-run the producer to fix at source and re-review, capped at §7's three attempts (then recon), or proceed under a **stated** `--forced` override. This is advisory — it clears no gate and advances no phase (a critic verdict is never a gate approval, per Universal Don'ts). It is the pre-build analog of `anti-legacy:uat-reviewer` for built code. *"Adversarial review for all outputs, even individually."*
+
 ---
 
 ## Universal Don'ts
@@ -193,6 +196,7 @@ All scripts are invoked through the workspace dispatcher: `python3 .anti-legacy/
 | `graph_normalizer` | Code graph → draft requirements scaffold (pinned reference; `domain_graph` is the production §I5 builder) | Front-half rule extraction (that is `extraction`) |
 | `validator_discovery` | The build/semantic/UAT verifier — runs build tooling, writes evidence (`run --gate <id>`) | Clearing a gate manually |
 | `packet_generator` | Requirements graph → offline Markdown packet | Replacing the human review |
+| `refine_loop` | The bounded make→review→refine primitive (§8): `descriptor --artifact <id>` resolves the generic single-artifact critic target (rendered file + source data from the §2 spine + manifest `depends_on`); `decide --verdict … --attempt …` returns the next move (refine / stop-converged / stop-at-§7-cap-recommend-recon / forced) with a branchable exit code | Acting on the decision (it computes only — the agent runs the producer + critic) or clearing a gate |
 
 `python3 .anti-legacy/run.py manifest status` is the authoritative pipeline state. File presence is not.
 
