@@ -11,16 +11,19 @@ class TestManifestManager(unittest.TestCase):
     def setUp(self):
         """Create a temp directory to simulate a project root."""
         self.project_dir = tempfile.mkdtemp(prefix="anti-legacy-test-")
-        self.scripts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts'))
-        self.manifest_script = os.path.join(self.scripts_dir, 'manifest.py')
+        # manifest now lives in the antilegacy_core package; invoke via `-m`.
+        self.core_parent = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), '..', 'skills', 'anti-legacy-expert', 'scripts'))
 
     def tearDown(self):
         shutil.rmtree(self.project_dir, ignore_errors=True)
 
     def _run(self, *args):
         """Run manifest.py with args in the temp project directory."""
-        cmd = [sys.executable, self.manifest_script] + list(args)
-        result = subprocess.run(cmd, cwd=self.project_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        cmd = [sys.executable, '-m', 'antilegacy_core.manifest'] + list(args)
+        env = dict(os.environ, PYTHONPATH=self.core_parent)
+        result = subprocess.run(cmd, cwd=self.project_dir, env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         return result
 
     def _load_manifest(self):

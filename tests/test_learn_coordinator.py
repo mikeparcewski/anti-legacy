@@ -8,7 +8,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from scripts.learn_coordinator import (
+from learn_coordinator import (
     analyze_phase,
     analyze_setup,
     analyze_survey,

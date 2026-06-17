@@ -1,5 +1,5 @@
 ---
-name: orchestrate
+name: anti-legacy:orchestrate
 description: >-
   Master orchestrator for the anti-legacy pipeline.
   Sequences all 16 phases (plus an optional semantic-join phase for multi-repo
@@ -252,10 +252,13 @@ What to do:
 
 ```
 What to do:
-1. Run packet_generator to compile the review packet
-2. Print a summary of what's in the packet for the user
-3. Register review_packet.md
-4. Advance
+1. Produce the stakeholder deliverables package first: run `anti-legacy:deliverables`
+   (PRD, diagrams, test strategy + scripts, migration plan, risk/decisions/evidence logs →
+   .anti-legacy/deliverables/). It registers each deliverable; it does NOT advance the phase.
+2. Run packet_generator to compile the review packet
+3. Print a summary of the packet AND the deliverables package (deliverables/README.md) for the user
+4. Register review_packet.md
+5. Advance
 ```
 
 ---
@@ -347,7 +350,7 @@ What to do:
 ```
 What to do:
 1. Read task.md — execute tasks layer by layer (L0 first)
-2. For each task, dispatch a @developer subagent with:
+2. For each task, dispatch a anti-legacy:developer subagent with:
    - The requirement from requirements_graph.json
    - The target file from blueprint.json
    - The test contract from contracts/
@@ -438,7 +441,7 @@ When approved: python3 .anti-legacy/run.py manifest gate GATE_3B_SEMANTIC --opin
 
 ```
 What to do:
-1. Dispatch @uat_reviewer subagent (read-only, different from build subagent)
+1. Dispatch anti-legacy:uat-reviewer subagent (read-only, different from build subagent)
 2. Review each requirement's target implementation against:
    - Business rules in requirements_graph.json
    - Test contracts in contracts/

@@ -35,10 +35,10 @@ import unittest
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPTS_DIR = os.path.join(REPO_ROOT, "scripts")
-COVERAGE_PATH = os.path.join(SCRIPTS_DIR, "coverage.py")
+COVERAGE_PATH = os.path.join(os.path.dirname(SCRIPTS_DIR), "skills", "anti-legacy-expert", "scripts", "antilegacy_core", "coverage.py")
 
-if SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, SCRIPTS_DIR)
+# SCRIPTS_DIR intentionally NOT added to sys.path (migrated modules resolve
+# via tests/conftest.py); SCRIPTS_DIR retained only for by-path shim guards.
 
 
 def _load_coverage():
@@ -46,7 +46,7 @@ def _load_coverage():
     if not os.path.isfile(COVERAGE_PATH):
         return None
     try:
-        return importlib.import_module("coverage")
+        return importlib.import_module("antilegacy_core.coverage")
     except Exception:
         return None
 
@@ -469,13 +469,16 @@ class TestCoverageGateCLI(unittest.TestCase):
         # takes effect), then call main() so the gate exit code IS the process
         # exit code. --db points at our hand-built synthetic SQLite graph, so the
         # whole path is binary-free.
+        core_parent = os.path.abspath(
+            os.path.join(SCRIPTS_DIR, "..", "skills", "anti-legacy-expert", "scripts"))
         driver = (
-            "import sys; sys.path.insert(0, %r); import coverage; "
+            "import sys; sys.path.insert(0, %r); "
+            "import antilegacy_core.coverage as coverage; "
             "_orig = coverage.load_annotations; "
             "coverage.load_annotations = lambda *a, **k: _orig(%r); "
             "raise SystemExit(coverage.main(["
             "'--db', %r, '--config', %r, '--json', %r, '--md', %r]))"
-            % (SCRIPTS_DIR, self.overlay, self.db, self.config,
+            % (core_parent, self.overlay, self.db, self.config,
                self.out_json, self.out_md)
         )
         return subprocess.run(

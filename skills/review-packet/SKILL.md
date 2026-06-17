@@ -15,6 +15,12 @@ Compiles the Requirements Graph, Blueprint, and Test Strategy into a single
 offline-friendly Markdown document that the team can review, annotate, and sign
 off on via git. Nothing requires a running server to read.
 
+> This packet is the single-document GATE_1 summary. For the detailed,
+> individually-consumable deliverables (PRD, architecture diagrams, test strategy +
+> functional test scripts, the end-to-end migration plan, and the risk / decisions /
+> evidence logs), run **`anti-legacy:deliverables`** — it renders them into
+> `.anti-legacy/deliverables/` from the same upstream artifacts.
+
 ## Cross-Platform Notes
 
 Script uses `python3`. Output is a plain Markdown file with embedded Mermaid

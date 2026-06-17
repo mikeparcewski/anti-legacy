@@ -8,7 +8,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from scripts.semantic_validator import find_dependency_chains, record_gap, generate_reports
+from semantic_validator import find_dependency_chains, record_gap, generate_reports
 
 class TestSemanticValidator(unittest.TestCase):
     def setUp(self):

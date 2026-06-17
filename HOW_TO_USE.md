@@ -17,12 +17,13 @@ Optional but recommended:
 ## Installation
 
 ```bash
-# As Antigravity plugin (recommended)
-cp -r anti-legacy/ ~/.gemini/antigravity-ide/plugins/anti-legacy/
-
-# Or workspace-specific
-cp -r anti-legacy/ .agents/plugins/anti-legacy/
+# Portable — any CLI (Claude Code, Cursor, Codex, Gemini …) via the skills standard.
+# Installs all skills + the bundled antilegacy_core library. Use --all (NOT --skill '*').
+npx skills add mikeparcewski/anti-legacy --all
 ```
+
+Or as a native plugin: Claude Code `/plugin install anti-legacy`, or Gemini
+`gemini extensions install https://github.com/mikeparcewski/anti-legacy`.
 
 Verify by asking Antigravity: *"What anti-legacy skills do I have?"*
 

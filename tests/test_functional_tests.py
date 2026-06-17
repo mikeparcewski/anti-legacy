@@ -6,7 +6,7 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts"))
+# legacy scripts/ insert removed — leaf modules resolved via tests/conftest.py
 import functional_tests as ft
 
 
@@ -225,7 +225,7 @@ class TestFunctionalAcceptanceGate(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
         self.ev_dir = os.path.join(self.test_dir, ".anti-legacy", "evidence")
         os.makedirs(self.ev_dir, exist_ok=True)
-        from validator_discovery import ValidatorRunner
+        from antilegacy_core.validator_discovery import ValidatorRunner
         self.runner = ValidatorRunner(self.test_dir,
                                       os.path.join(self.test_dir, "config.json"),
                                       os.path.join(self.test_dir, "manifest.json"))

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""anti-legacy workspace dispatcher (written by anti-legacy:setup at init time).
+
+Resolves a bare script STEM to a runnable target and dispatches it, with the
+shared `antilegacy_core` package on PYTHONPATH.
+
+Host-agnostic by design: it DISCOVERS the bundled core across both install
+shapes and every CLI, rather than assuming one layout:
+  - whole-repo / plugin install:        <PLUGIN_ROOT>/skills/*/scripts/antilegacy_core
+  - skills standard (npx skills), proj:  <cwd>/.<cli>/skills/*/scripts/antilegacy_core
+  - skills standard, global:             ~/.<cli>/skills/*/scripts/antilegacy_core
+  - running from the source tree (dev):  <cwd>/skills/*/scripts/antilegacy_core
+The `.<cli>` glob (`.claude`, `.cursor`, `.agents`, …) means no CLI is special-cased.
+
+Workspace state (config.json, annotations, graphs) is always the CURRENT WORKING
+DIRECTORY — never anchored on a script's __file__.
+"""
+import glob
+import importlib.util
+import os
+import subprocess
+import sys
+
+PLUGIN_ROOT = r"__PLUGIN_ROOT__"  # baked by setup; may stay unset for skills-standard installs
+
+
+def _illegal_stem(stem):
+    """Path-traversal guard: a stem must be a bare name (no separators, no `..`)."""
+    if not stem:
+        return True
+    if os.sep in stem or (os.altsep and os.altsep in stem):
+        return True
+    if ".." in stem.split(os.sep):
+        return True
+    if os.path.dirname(os.path.normpath(stem)):
+        return True
+    return False
+
+
+def _has_plugin_root():
+    # A real baked root is an existing directory; the un-substituted placeholder
+    # is not. NB: never test against the literal sentinel here — setup's
+    # str.replace() would rewrite it along with the assignment above.
+    return bool(PLUGIN_ROOT) and os.path.isdir(PLUGIN_ROOT)
+
+
+def _skills_roots():
+    """Candidate skills roots, priority order, across install methods and CLIs."""
+    cwd = os.getcwd()
+    home = os.path.expanduser("~")
+    roots = []
+    if _has_plugin_root():
+        roots.append(os.path.join(PLUGIN_ROOT, "skills"))   # whole-repo / plugin install
+    roots.append(os.path.join(cwd, "skills"))               # dev: running from source tree
+    roots.extend(glob.glob(os.path.join(cwd, ".*", "skills")))    # skills std, project scope
+    roots.extend(glob.glob(os.path.join(home, ".*", "skills")))   # skills std, global scope
+    return roots
+
+
+def _find_core_dir():
+    """Absolute path of the dir CONTAINING the `antilegacy_core` package, or None."""
+    for root in _skills_roots():
+        for init in sorted(glob.glob(
+            os.path.join(root, "*", "scripts", "antilegacy_core", "__init__.py")
+        )):
+            return os.path.dirname(os.path.dirname(init))  # the …/scripts dir
+    return None
+
+
+def _legacy_dirs():
+    dirs = []
+    if _has_plugin_root():
+        dirs.append(os.path.join(PLUGIN_ROOT, "scripts"))
+    dirs.append(os.path.join(os.getcwd(), "scripts"))
+    return dirs
+
+
+def _skill_script(stem):
+    """skills/*/scripts/<stem>.py (post-migration leaf scripts), or None."""
+    for root in _skills_roots():
+        for hit in sorted(glob.glob(os.path.join(root, "*", "scripts", stem + ".py"))):
+            return hit
+    return None
+
+
+def _legacy_script(stem):
+    """Legacy scripts/<stem>.py (migration window), or None."""
+    for d in _legacy_dirs():
+        cand = os.path.join(d, stem + ".py")
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.stderr.write("usage: run.py <script-stem> [args...]\n")
+        sys.exit(2)
+    stem = sys.argv[1]
+    if _illegal_stem(stem):
+        sys.stderr.write("run.py: illegal script stem\n")
+        sys.exit(2)
+    args = sys.argv[2:]
+
+    core_dir = _find_core_dir()
+
+    env = os.environ.copy()
+    if core_dir:
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = os.pathsep.join([core_dir] + ([existing] if existing else []))
+        if core_dir not in sys.path:
+            sys.path.insert(0, core_dir)  # so find_spec can probe in THIS process
+
+    # Probe 1 — library module: `python -m antilegacy_core.<stem>`
+    if core_dir:
+        try:
+            spec = importlib.util.find_spec("antilegacy_core." + stem)
+        except (ImportError, ValueError):
+            spec = None  # parent not importable / not a package — fall through (D1)
+        if spec is not None:
+            rc = subprocess.run(
+                [sys.executable, "-m", "antilegacy_core." + stem] + args, env=env
+            ).returncode
+            sys.exit(rc)
+
+    # Probe 2 — skill-local leaf script; Probe 3 — legacy scripts/ (migration)
+    script = _skill_script(stem) or _legacy_script(stem)
+    if script is None:
+        if core_dir is None and not any(os.path.isdir(d) for d in _legacy_dirs()):
+            sys.stderr.write(
+                "run.py: antilegacy_core not found and no legacy scripts/ — broken "
+                "install. Reinstall the bundle (`npx skills add <repo> --all`, or your "
+                "plugin install).\n"
+            )
+            sys.exit(1)
+        sys.stderr.write("run.py: no such script: %s\n" % stem)
+        sys.exit(2)
+
+    rc = subprocess.run([sys.executable, script] + args, env=env).returncode
+    sys.exit(rc)
+
+
+if __name__ == "__main__":
+    main()

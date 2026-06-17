@@ -11,8 +11,8 @@ package prefix.
 
 This conftest puts <repo>/scripts on sys.path so the eval test files can do:
 
-    import graph_normalizer
-    import compare_graphs
+    from antilegacy_core import graph_normalizer
+    from antilegacy_core import compare_graphs
 
 and so subprocess invocations that the evals spawn (which set their own path)
 match the in-process import path used here.
@@ -36,11 +36,15 @@ _REPO_ROOT = os.path.abspath(os.path.join(_THIS_DIR, os.pardir, os.pardir))
 _SCRIPTS_DIR = os.path.join(_REPO_ROOT, "scripts")
 _FIXTURES_DIR = os.path.join(_THIS_DIR, "fixtures")
 
-# --- make scripts/ importable by bare module name ---------------------------
-# Insert at position 0 so the project's scripts win over any same-named module
-# that might be installed elsewhere on the system.
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
+# --- make the migrated modules importable -----------------------------------
+# Core lives in antilegacy_core (skills/anti-legacy-expert/scripts); single-owner
+# leaf scripts live in their owning skill's scripts/ dir. Add every skill scripts
+# dir — NOT the legacy top-level scripts/, which now holds only by-path migration
+# shims that must never shadow the real modules on import.
+import glob as _glob
+for _d in sorted(_glob.glob(os.path.join(_REPO_ROOT, "skills", "*", "scripts"))):
+    if _d not in sys.path:
+        sys.path.insert(0, _d)
 
 
 # --- shared, read-only path fixtures ---------------------------------------

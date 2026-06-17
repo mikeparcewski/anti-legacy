@@ -33,15 +33,15 @@ import unittest
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPTS_DIR = os.path.join(REPO_ROOT, "scripts")
-HELPER_PATH = os.path.join(SCRIPTS_DIR, "wicked_estate.py")
+HELPER_PATH = os.path.join(os.path.dirname(SCRIPTS_DIR), "skills", "anti-legacy-expert", "scripts", "antilegacy_core", "wicked_estate.py")
 COBOL_FIXTURE = os.path.join(
     os.path.dirname(__file__), "mock_workspace", "app_cobol"
 )
 
 # Make scripts/ importable so we can drive the helper's documented Python API
 # (the contract states scripts/wicked_estate.py is "importable + run.py CLI").
-if SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, SCRIPTS_DIR)
+# SCRIPTS_DIR intentionally NOT added to sys.path (migrated modules resolve
+# via tests/conftest.py); SCRIPTS_DIR retained only for by-path shim guards.
 
 
 def _load_helper():
@@ -49,7 +49,7 @@ def _load_helper():
     if not os.path.isfile(HELPER_PATH):
         return None
     try:
-        return importlib.import_module("wicked_estate")
+        return importlib.import_module("antilegacy_core.wicked_estate")
     except Exception:
         return None
 
@@ -104,7 +104,7 @@ class TestExtractionCorePipeline(unittest.TestCase):
     # ------------------------------------------------------------------ #
     def _index_via_cli(self):
         cmd = [
-            sys.executable, HELPER_PATH,
+            sys.executable, "-m", "antilegacy_core.wicked_estate",
             "index", self.app_dir, "--db", self.db,
         ]
         res = subprocess.run(

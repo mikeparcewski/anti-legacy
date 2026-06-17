@@ -222,7 +222,7 @@ Write `.anti-legacy/requirements/blueprint.md` with:
 
 ## Step 6b: Generate NFRs document
 
-Read `templates/nfrs.md`, customize it by replacing `{project_name}`, `{target_stack}`, and `{deployment_target}` with details from `config.json`, and save the result as `.anti-legacy/requirements/nfrs.md`.
+Read `skills/blueprint/references/nfrs.md`, customize it by replacing `{project_name}`, `{target_stack}`, and `{deployment_target}` with details from `config.json`, and save the result as `.anti-legacy/requirements/nfrs.md`.
 
 ## Step 7: Store blueprint decisions in git-brain
 

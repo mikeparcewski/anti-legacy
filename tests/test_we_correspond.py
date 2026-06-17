@@ -43,8 +43,8 @@ import subprocess
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "scripts")
 )
-if SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, SCRIPTS_DIR)
+# SCRIPTS_DIR intentionally NOT added to sys.path (migrated modules resolve
+# via tests/conftest.py); SCRIPTS_DIR retained only for by-path shim guards.
 
 # The known-good v0.0.1 binary used by the spike (also the helper's documented
 # priority-4 fallback). Real-binary tests skip cleanly when it is absent.
@@ -58,7 +58,7 @@ BINARY = shutil.which("wicked-estate") or (
 # Guarded import: stay GREEN (skip, never error at collection) if the helper is
 # not importable yet during the parallel build.
 try:
-    import wicked_estate as we  # noqa: E402
+    from antilegacy_core import wicked_estate as we  # noqa: E402
 
     HELPER_IMPORT_ERROR = None
 except Exception as exc:  # pragma: no cover - exercised only pre-helper

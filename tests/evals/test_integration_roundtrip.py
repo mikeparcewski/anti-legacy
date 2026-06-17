@@ -48,7 +48,7 @@ def _run_normalizer(scripts_dir, input_path, output_path, *, config_path=None,
     """
     cmd = [
         sys.executable,
-        _normalizer_path(scripts_dir),
+        "-m", "antilegacy_core.graph_normalizer",
         "--input", input_path,
         "--output", output_path,
     ]
@@ -146,7 +146,7 @@ def functional_graph(functional_run, code_graph_path):
 
     # Fallback: exercise the in-process functional normalizer so T2 is tested
     # on real functional output even before the T1 CLI fix lands.
-    import graph_normalizer as gn  # scripts/ is on sys.path via conftest
+    from antilegacy_core import graph_normalizer as gn  # scripts/ is on sys.path via conftest
 
     with open(code_graph_path, "r", encoding="utf-8") as fh:
         code_graph = json.load(fh)

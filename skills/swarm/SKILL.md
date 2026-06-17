@@ -104,7 +104,7 @@ Using Antigravity's agent dispatch mechanism, invoke the `developer` agent with
 the assembled micro-context:
 
 ```
-@developer
+anti-legacy:developer
 
 ## Task: {task_id} — {task_title}
 
@@ -192,7 +192,7 @@ container automatically; without the container, stacking is a compile error
 
 **When the target stack is Java/Kotlin (or any JVM `target_stack`), the
 coordinator MUST ensure these templates exist in the target tree before
-dispatching annotation-bearing tasks.** They are plugin-root templates, so copy
+dispatching annotation-bearing tasks.** They are bundled in the developer skill (`assets/`), so copy
 them once (idempotent) into a `annotations` package under the target source
 root, then change each file's `package` line to match the target's package
 layout:
@@ -207,7 +207,7 @@ plugin_root = r'{plugin_root_abs}'
 dest = os.path.join(r'{target_path}', 'src', 'main', 'java', 'annotations')
 os.makedirs(dest, exist_ok=True)
 for name in ('ImplementsRule.java', 'ImplementsRules.java'):
-    src = os.path.join(plugin_root, 'templates', name)
+    src = os.path.join(plugin_root, 'skills', 'developer', 'assets', name)
     out = os.path.join(dest, name)
     if not os.path.exists(out):
         shutil.copyfile(src, out)

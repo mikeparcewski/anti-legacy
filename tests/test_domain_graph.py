@@ -50,8 +50,8 @@ import tempfile
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "scripts")
 )
-if SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, SCRIPTS_DIR)
+# SCRIPTS_DIR intentionally NOT added to sys.path (migrated modules resolve
+# via tests/conftest.py); SCRIPTS_DIR retained only for by-path shim guards.
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCHEMA_PATH = os.path.join(
@@ -60,9 +60,9 @@ SCHEMA_PATH = os.path.join(
 
 # Guarded imports: skip — never error — if a piece is not importable yet.
 try:
-    import coverage as cov          # noqa: E402
-    import wicked_estate as we      # noqa: E402
-    import domain_graph as dg       # noqa: E402
+    from antilegacy_core import coverage as cov          # noqa: E402
+    from antilegacy_core import wicked_estate as we      # noqa: E402
+    from antilegacy_core import domain_graph as dg       # noqa: E402
 
     IMPORT_ERROR = None
 except Exception as exc:  # pragma: no cover - only pre-builder

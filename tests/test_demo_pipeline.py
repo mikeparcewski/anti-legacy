@@ -216,7 +216,14 @@ class TestEndToEndPipeline(unittest.TestCase):
 
     def _run_script(self, script, *args):
         """Run a script and return (returncode, stdout, stderr)."""
-        cmd = [sys.executable, os.path.join(self.scripts_dir, script)] + list(args)
+        _legacy = os.path.join(self.scripts_dir, script)
+        if os.path.isfile(_legacy):
+            cmd = [sys.executable, _legacy] + list(args)
+        else:  # migrated — leaf (skills/*/scripts) run as bare module, else core
+            import glob as _glob
+            _stem = script[:-3] if script.endswith('.py') else script
+            _leaf = _glob.glob(os.path.join(os.path.dirname(self.scripts_dir), 'skills', '*', 'scripts', _stem + '.py'))
+            cmd = [sys.executable, '-m', (_stem if _leaf else 'antilegacy_core.' + _stem)] + list(args)
         result = subprocess.run(
             cmd,
             cwd=self.workspace,

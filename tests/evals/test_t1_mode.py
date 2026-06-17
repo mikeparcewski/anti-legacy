@@ -58,7 +58,7 @@ def _run_normalizer(repo_root, input_path, output_path, *, config_path=None,
     """Invoke graph_normalizer.py via its CLI; return (CompletedProcess)."""
     cmd = [
         sys.executable,
-        _normalizer_path(repo_root),
+        "-m", "antilegacy_core.graph_normalizer",
         "--input", input_path,
         "--output", output_path,
     ]

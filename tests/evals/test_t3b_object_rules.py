@@ -17,8 +17,8 @@ validation. These tests are RED against current code and turn GREEN only when:
      additionalProperties:false rule objects -- WITHOUT making them required,
      and WITHOUT loosening id-pattern / required {id, statement} enforcement.
 
-  2. The REAL .anti-legacy/requirements/requirements_graph.json validates
-     against the enriched profile with ZERO errors (i.e. the 345 string items
+  2. The REAL shipped demo graph (tests/evals/fixtures/real_demo_requirements_graph.json)
+     validates against the enriched profile with ZERO errors (i.e. the 345 string items
      have been migrated to {id, statement} object form).
 
   3. scripts/validator_discovery.py's GATE_1_DESIGN performs a real schema
@@ -83,8 +83,11 @@ def _enriched_schema_path(repo_root):
 
 
 def _real_graph_path(repo_root):
+    # The shipped public demo graph (Apache Kafka + Pulsar producer APIs). Relocated out
+    # of the (now-gitignored, local-only) .anti-legacy/ workspace into the eval fixtures so
+    # this test still validates the real graph on a fresh clone.
     return os.path.join(
-        repo_root, ".anti-legacy", "requirements", "requirements_graph.json"
+        repo_root, "tests", "evals", "fixtures", "real_demo_requirements_graph.json"
     )
 
 
@@ -453,7 +456,7 @@ def test_t3b_gate1_rejects_string_form_rules(tmp_path):
     legacy STRING list. RED today: the weak `if not req.get("business_rules")`
     truthiness check passes any non-empty list, so string-form data is accepted.
     """
-    import validator_discovery  # on sys.path via tests/evals/conftest.py
+    from antilegacy_core import validator_discovery  # on sys.path via tests/evals/conftest.py
     ws = _write_workspace(tmp_path, ["RULE-001: a legacy string rule"])
     runner = validator_discovery.ValidatorRunner(
         ws,
@@ -472,7 +475,7 @@ def test_t3b_gate1_accepts_object_form_rules(tmp_path):
     """The companion: GATE_1_DESIGN must ACCEPT a requirement whose
     business_rules is object form {id, statement}. This guards the gate edit
     from over-rejecting once real validation is wired."""
-    import validator_discovery
+    from antilegacy_core import validator_discovery
     ws = _write_workspace(
         tmp_path,
         [{"id": "RULE-001", "statement": "an object-form rule"}],
@@ -494,7 +497,8 @@ def test_t3b_gate1_source_uses_real_validation_not_truthiness(repo_root):
     schema validation (Draft7Validator) rather than rely solely on the weak
     `if not req.get("business_rules")` truthiness. RED today: the source still
     contains only the truthiness check and never references Draft7Validator."""
-    src_path = os.path.join(repo_root, "scripts", "validator_discovery.py")
+    src_path = os.path.join(repo_root, "skills", "anti-legacy-expert", "scripts",
+                            "antilegacy_core", "validator_discovery.py")
     src = open(src_path, "r", encoding="utf-8").read()
     assert "Draft7Validator" in src, (
         "validator_discovery.py never references Draft7Validator -- GATE_1 still "

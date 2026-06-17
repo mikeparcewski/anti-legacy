@@ -7,7 +7,7 @@ import os
 import json
 import tempfile
 import shutil
-from scripts.semantic_join import normalize_path, analyze_project
+from semantic_join import normalize_path, analyze_project
 
 class TestSemanticJoin(unittest.TestCase):
     def setUp(self):

@@ -15,7 +15,7 @@ import sys
 import subprocess
 
 TEMPLATE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "templates", "run.py"
+    os.path.dirname(os.path.dirname(__file__)), "skills", "setup", "assets", "run.py.tmpl"
 )
 
 

@@ -23,7 +23,7 @@ import shutil
 import tempfile
 import unittest
 
-from scripts.generate_target_graph import (
+from generate_target_graph import (
     TargetGraphGenerator,
     _LANG_CONFIG,
     _PKG_QUALIFIER_RE,

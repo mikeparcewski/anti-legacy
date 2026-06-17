@@ -33,8 +33,9 @@ where `<script>` is the bare script stem (no `scripts/` prefix, no `.py`
 suffix) — e.g. `python3 .anti-legacy/run.py manifest status`,
 `python3 .anti-legacy/run.py git_brain store ...`. The CWD is ALWAYS the
 workspace, so `.anti-legacy/run.py` always resolves. `run.py` is a thin exec
-shim that re-targets the bare stem to `<plugin_root>/scripts/<script>.py`
-using the absolute plugin root baked in at setup time.
+seam that resolves the bare stem to the bundled `antilegacy_core` library
+(run as `python -m antilegacy_core.<stem>`) or a skill-local
+`skills/*/scripts/<stem>.py`, discovered from the baked plugin root.
 
 ## Parameters
 
@@ -52,13 +53,14 @@ using the absolute plugin root baked in at setup time.
 Run the manifest initializer. The dispatcher (`.anti-legacy/run.py`) does not
 exist yet — it is written in Step 1.5 — so this bootstrap call addresses
 `manifest.py` by the **absolute plugin root** (`{plugin_root_abs}`, the parent
-of `skills/` and `scripts/`, which the agent knows from this skill's own path
+of `skills/`, which the agent knows from this skill's own path
 `<plugin_root>/skills/setup/SKILL.md`). Do **not** use a bare `scripts/...`
 path here: the current working directory is the target workspace, not the
 plugin install dir, so a relative path would not resolve.
 
 ```bash
-python3 {plugin_root_abs}/scripts/manifest.py init \
+PYTHONPATH="{plugin_root_abs}/skills/anti-legacy-expert/scripts" \
+python3 -m antilegacy_core.manifest init \
   --name "{name}" \
   --target-stack "{target_stack}" \
   --target-path "{target_path}"
@@ -72,9 +74,9 @@ On success, `.anti-legacy/manifest.json` and `.anti-legacy/audit.jsonl` are crea
 
 This is the bootstrap that makes every downstream skill portable. Resolve the
 **absolute plugin root** — the directory that contains this skill's parent,
-i.e. the parent of `skills/` and `scripts/` (the agent knows it from this
+i.e. the parent of `skills/` (the agent knows it from this
 skill's own path: `<plugin_root>/skills/setup/SKILL.md`). Then copy
-`templates/run.py` from the plugin root, replacing the `__PLUGIN_ROOT__`
+`skills/setup/assets/run.py.tmpl` from the plugin root, replacing the `__PLUGIN_ROOT__`
 sentinel with the resolved absolute path, and write the result to
 `.anti-legacy/run.py` (chmod +x):
 
@@ -82,7 +84,7 @@ sentinel with the resolved absolute path, and write the result to
 python3 -c "
 import os, stat
 plugin_root = r'{plugin_root_abs}'   # absolute parent of skills/ and scripts/, resolved by the agent
-src = os.path.join(plugin_root, 'templates', 'run.py')
+src = os.path.join(plugin_root, 'skills', 'setup', 'assets', 'run.py.tmpl')
 content = open(src).read().replace('__PLUGIN_ROOT__', plugin_root)
 dst = '.anti-legacy/run.py'
 open(dst, 'w').write(content)
@@ -172,17 +174,17 @@ python3 .anti-legacy/run.py git_brain store \
   --category decisions
 ```
 
-Also, seed the brain with modernization anti-patterns and traversal strategies to enforce architectural best practices. These template files live under the **plugin root**, not the workspace, so they MUST be referenced by the absolute plugin root (`{plugin_root_abs}/templates/...`) exactly like Step 1's `init` and Step 1.5's dispatcher write — a workspace-relative `templates/...` path does NOT resolve here (the CWD is the target workspace) and `git_brain ingest` would fail with `File not found`:
+Also, seed the brain with modernization anti-patterns and traversal strategies to enforce architectural best practices. These reference files ship with this skill (`references/`), under the **plugin root**, not the workspace, so they MUST be referenced by the absolute plugin root (`{plugin_root_abs}/skills/setup/references/...`) exactly like Step 1's `init` and Step 1.5's dispatcher write — a workspace-relative path does NOT resolve here (the CWD is the target workspace) and `git_brain ingest` would fail with `File not found`:
 
 ```bash
 python3 .anti-legacy/run.py git_brain ingest \
-  --file {plugin_root_abs}/templates/anti_patterns.md \
+  --file {plugin_root_abs}/skills/setup/references/anti_patterns.md \
   --category patterns \
   --tags "anti-pattern,architecture,infrastructure" \
   --type reference
 
 python3 .anti-legacy/run.py git_brain ingest \
-  --file {plugin_root_abs}/templates/traversal_strategies.md \
+  --file {plugin_root_abs}/skills/setup/references/traversal_strategies.md \
   --category patterns \
   --tags "traversal,architecture,planning,risk" \
   --type reference

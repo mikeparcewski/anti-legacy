@@ -209,10 +209,10 @@ class TestSchemaSourceKindsSlot(unittest.TestCase):
     def test_committed_requirements_graph_unaffected(self):
         # The additive change does not invalidate the real committed graph.
         path = os.path.join(
-            REPO_ROOT, ".anti-legacy", "requirements", "requirements_graph.json"
+            REPO_ROOT, "tests", "evals", "fixtures", "real_demo_requirements_graph.json"
         )
         if not os.path.exists(path):
-            self.skipTest("no committed requirements_graph.json to cross-check")
+            self.skipTest("no shipped demo requirements_graph fixture to cross-check")
         with open(path) as fh:
             doc = json.load(fh)
         self.assertEqual(

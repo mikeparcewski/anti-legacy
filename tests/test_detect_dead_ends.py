@@ -15,7 +15,7 @@ import tempfile
 import shutil
 from contextlib import redirect_stdout
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts"))
+# legacy scripts/ insert removed — leaf modules resolved via tests/conftest.py
 import detect_dead_ends as dde  # noqa: E402
 
 

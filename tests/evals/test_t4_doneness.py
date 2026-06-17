@@ -61,7 +61,7 @@ import pytest
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_THIS_DIR, os.pardir, os.pardir))
 _FIXTURES_DIR = os.path.join(_THIS_DIR, "fixtures")
-_COMPARE_GRAPHS = os.path.join(_REPO_ROOT, "scripts", "compare_graphs.py")
+_COMPARE_GRAPHS = os.path.join(_REPO_ROOT, "skills", "anti-legacy-expert", "scripts", "antilegacy_core", "compare_graphs.py")
 
 # REQ_X (from requirements_graph_enriched.json) carries 4 rule ids:
 #   business_rules: RULE-001, RULE-002 ; validations: VAL-001 ; error_paths: ERR-001
@@ -101,7 +101,7 @@ def _run_compare(tmp_path, target_graph_fixture, extra_args=None):
     req, bp, tg, report_md = _stage_inputs(tmp_path, target_graph_fixture)
     cmd = [
         sys.executable,
-        _COMPARE_GRAPHS,
+        "-m", "antilegacy_core.compare_graphs",
         "--requirements-graph", str(req),
         "--blueprint", str(bp),
         "--target-graph", str(tg),
@@ -386,7 +386,7 @@ def _run_compare_req_obj(tmp_path, rg_obj, target_graph_fixture):
     shutil.copyfile(_fixture(target_graph_fixture), tg)
     report_md = tmp_path / "evidence" / "functional_comparison_report.md"
     cmd = [
-        sys.executable, _COMPARE_GRAPHS,
+        sys.executable, "-m", "antilegacy_core.compare_graphs",
         "--requirements-graph", str(req),
         "--blueprint", str(bp),
         "--target-graph", str(tg),
@@ -492,7 +492,7 @@ def _run_compare_target_obj(tmp_path, target_obj):
         json.dump(target_obj, f)
     report_md = tmp_path / "evidence" / "functional_comparison_report.md"
     cmd = [
-        sys.executable, _COMPARE_GRAPHS,
+        sys.executable, "-m", "antilegacy_core.compare_graphs",
         "--requirements-graph", str(req),
         "--blueprint", str(bp),
         "--target-graph", str(tg),

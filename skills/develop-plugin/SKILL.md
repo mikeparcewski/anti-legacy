@@ -53,7 +53,7 @@ Identify which plugin component requires modification:
 - **Test Strategy / Contract mismatch** (invalid test scenarios, missing rounding verification):
   - Modify `skills/test-strategy/SKILL.md` or `scripts/test_runner.py`
 - **Architectural / Compliance gaps** (line-by-line translation, missing safety checks):
-  - Modify `templates/anti_patterns.md` or `templates/nfrs.md`
+  - Modify `skills/setup/references/anti_patterns.md` or `skills/blueprint/references/nfrs.md`
 
 ### Step 3: Write a regression test
 

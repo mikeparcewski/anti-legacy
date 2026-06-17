@@ -33,8 +33,8 @@ import unittest
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPTS_DIR = os.path.join(REPO_ROOT, "scripts")
-if SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, SCRIPTS_DIR)
+# SCRIPTS_DIR intentionally NOT added to sys.path (migrated modules resolve
+# via tests/conftest.py); SCRIPTS_DIR retained only for by-path shim guards.
 
 WICKED_ESTATE_FALLBACK = (
     ""
@@ -46,8 +46,8 @@ BINARY = shutil.which("wicked-estate") or (
 # Guarded imports: the loop + helper are built by sibling units. Skip, never error.
 try:
     import extract as ext  # noqa: E402
-    import wicked_estate as we  # noqa: E402
-    import coverage as cov  # noqa: E402
+    from antilegacy_core import wicked_estate as we  # noqa: E402
+    from antilegacy_core import coverage as cov  # noqa: E402
 
     IMPORT_ERROR = None
 except Exception as exc:  # pragma: no cover - exercised only pre-build

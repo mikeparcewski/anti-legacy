@@ -7,9 +7,9 @@ import tempfile
 import subprocess
 
 # Adjust path to find scripts
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
+# legacy scripts/ insert removed — leaf modules resolved via tests/conftest.py
 
-from graph_normalizer import GraphNormalizer
+from antilegacy_core.graph_normalizer import GraphNormalizer
 
 
 class TestGraphNormalizerSingleApp(unittest.TestCase):
@@ -296,7 +296,7 @@ class TestGraphNormalizerCLI(unittest.TestCase):
             json.dump(code_graph, f)
 
         result = subprocess.run(
-            [sys.executable, os.path.join(self.scripts_dir, 'graph_normalizer.py'),
+            [sys.executable, "-m", "antilegacy_core.graph_normalizer",
              '--input', input_path, '--output', output_path],
             # Run in the tmpdir so the CLI's default --config (.anti-legacy/config.json,
             # resolved relative to CWD) cannot pick up the host workspace's config.
@@ -316,7 +316,7 @@ class TestGraphNormalizerCLI(unittest.TestCase):
 
     def test_cli_bad_input_path(self):
         result = subprocess.run(
-            [sys.executable, os.path.join(self.scripts_dir, 'graph_normalizer.py'),
+            [sys.executable, "-m", "antilegacy_core.graph_normalizer",
              '--input', '/nonexistent/path.json',
              '--output', os.path.join(self.tmpdir, 'out.json')],
             cwd=self.tmpdir,
@@ -603,7 +603,7 @@ class TestFunctionalCLI(unittest.TestCase):
         """CLI with --mode functional produces merged output."""
         output_path = os.path.join(self.tmpdir, "out.json")
         result = subprocess.run(
-            [sys.executable, os.path.join(self.scripts_dir, 'graph_normalizer.py'),
+            [sys.executable, "-m", "antilegacy_core.graph_normalizer",
              '--input', self.input_path, '--output', output_path, '--mode', 'functional'],
             cwd=self.tmpdir,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
@@ -627,7 +627,7 @@ class TestFunctionalCLI(unittest.TestCase):
         """CLI without --mode defaults to structural."""
         output_path = os.path.join(self.tmpdir, "out_default.json")
         result = subprocess.run(
-            [sys.executable, os.path.join(self.scripts_dir, 'graph_normalizer.py'),
+            [sys.executable, "-m", "antilegacy_core.graph_normalizer",
              '--input', self.input_path, '--output', output_path],
             # Hermetic CWD: the no-`--mode` default must resolve from the script's own
             # fallback ('structural'), NOT from whatever migration_mode the host

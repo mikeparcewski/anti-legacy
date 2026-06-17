@@ -8,7 +8,7 @@ import os
 import shutil
 import tempfile
 from unittest.mock import patch, MagicMock
-from scripts.validator_discovery import ValidatorDiscovery, ValidatorRunner
+from antilegacy_core.validator_discovery import ValidatorDiscovery, ValidatorRunner
 
 class TestValidatorDiscovery(unittest.TestCase):
     def setUp(self):

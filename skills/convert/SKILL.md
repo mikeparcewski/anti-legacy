@@ -508,7 +508,7 @@ Please review and say 'approve gate 3b' when ready for UAT."
 ```
 invoke_subagent phase-worker:
   "Read the skill file at skills/uat-crew/SKILL.md (set IsSkillFile: true) and execute
-   anti-legacy:uat-crew. Dispatch @uat_reviewer subagents. Produce verdicts."
+   anti-legacy:uat-crew. Dispatch anti-legacy:uat-reviewer subagents. Produce verdicts."
 ```
 
 After UAT, **check acceptance criterion**: "UAT passed" — update criteria table.

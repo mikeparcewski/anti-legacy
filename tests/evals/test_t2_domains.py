@@ -45,7 +45,7 @@ import os
 
 import pytest
 
-import graph_normalizer  # on sys.path via conftest
+from antilegacy_core import graph_normalizer  # on sys.path via conftest
 
 
 # ---------------------------------------------------------------------------

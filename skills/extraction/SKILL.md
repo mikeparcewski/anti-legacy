@@ -126,6 +126,35 @@ non-COBOL repo can tune them):
   Useful for large graphs — the crawl is resumable, so a capped session is safe.
 - **app** (optional): restrict the crawl to a single source app / DB.
 
+### Large estates & quota resilience (chunk the crawl)
+
+A big estate (hundreds–thousands of behavior-bearing nodes) is a lot of LLM calls.
+Do **not** crawl it all in one unbroken subagent — a single `RESOURCE_EXHAUSTED` / 429
+(or any crash) in a 900-node run would otherwise discard the whole session. The crawl
+is built to survive this; lean on it:
+
+- **The overlay is the durable cursor.** Every RESOLVE/RISK is appended to
+  `.anti-legacy/annotations.jsonl` the instant it is written (atomic, per node). A
+  crash loses at most the single in-flight node; everything already settled is
+  persisted — there is no in-memory progress to lose.
+- **Chunk with `limit` (and `app` for multi-repo).** Run bounded sessions — e.g.
+  `limit=100`, or one `app` at a time — instead of one giant pass. Each session takes
+  the next rank-ordered unaccounted nodes and returns; the next resumes exactly where
+  it stopped (settled nodes are skipped). A fresh subagent per chunk means no single
+  process accumulates the whole estate's token load, so you stay under per-process
+  quota and a 429 only costs the current chunk, not the run.
+- **Resume after a 429 — just re-run.** Recovery is `coverage` → read the printed
+  `unaccounted_nodes[]` → run the crawl again on that worklist. No "adopt the dead
+  subagent" step exists or is needed: the parent re-runs the same idempotent crawl and
+  it picks up the remaining nodes. Repeat until `coverage` exits 0.
+- **Checkpoint coverage between chunks.** Re-running `coverage` after each chunk
+  regenerates the report (progress is recorded) and gives the parent a clean,
+  file-based point to verify/finalize even if a child died mid-chunk — finalize-by-parent
+  stays a re-runnable command, never a manual reconstruction.
+
+This turns a 900-node crawl into a sequence of small, restartable steps rather than one
+fragile long-running call.
+
 ## The model (read first)
 
 ```
