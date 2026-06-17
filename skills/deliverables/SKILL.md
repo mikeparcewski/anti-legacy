@@ -122,7 +122,7 @@ source data it was rendered from — hunting unsupported/optimistic claims, drop
 traceability, empty/weak sections, missing parity rules on numeric outputs, "done" that hides a
 gap, and divergence from the requirements graph.
 
-Run `anti-legacy:deliverable-review` (see that skill for the critic micro-context and the
+Run `anti-legacy:adversarial-review` (see that skill for the critic micro-context and the
 parallel-dispatch protocol). It assembles the worklist via:
 
 ```bash
@@ -168,7 +168,7 @@ Report to the user:
   migration-plan + Jira CSV, risk/decisions/evidence logs)
 - `.anti-legacy/deliverables/README.md` — the registered index (`deliverables-index`)
 - Manifest: `deliverable-*` artifacts registered; **phase unchanged**
-- Adversarial-review verdicts (`anti-legacy:deliverable-review`, Step 4) — advisory, no artifact
+- Adversarial-review verdicts (`anti-legacy:adversarial-review`, Step 4) — advisory, no artifact
 
 **Next step**: address any REVISE/BLOCK from the adversarial review (re-run the named producing
 deliverable, then re-review), then share the package via git/fileshare and feed it into the

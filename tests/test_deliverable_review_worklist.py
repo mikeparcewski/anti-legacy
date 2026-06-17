@@ -21,7 +21,7 @@ class DeliverableReviewWorklistTest(unittest.TestCase):
         self.ws = tempfile.mkdtemp(prefix="anti-legacy-dlvreview-")
         repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.core_parent = os.path.join(repo, "skills", "anti-legacy-expert", "scripts")
-        self.script = os.path.join(repo, "skills", "deliverable-review", "scripts",
+        self.script = os.path.join(repo, "skills", "adversarial-review", "scripts",
                                    "deliverable_review_worklist.py")
         self.env = dict(os.environ, PYTHONPATH=self.core_parent)
 
@@ -159,7 +159,7 @@ class DeliverableReviewWorklistTest(unittest.TestCase):
         """Guard the deliberate mirror: the worklist SUITE ids must equal the index SUITE ids,
         so a new deliverable cannot be added to the package yet silently skip adversarial review."""
         repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        sys.path.insert(0, os.path.join(repo, "skills", "deliverable-review", "scripts"))
+        sys.path.insert(0, os.path.join(repo, "skills", "adversarial-review", "scripts"))
         sys.path.insert(0, os.path.join(repo, "skills", "deliverables", "scripts"))
         sys.path.insert(0, self.core_parent)
         try:
@@ -171,7 +171,7 @@ class DeliverableReviewWorklistTest(unittest.TestCase):
                 self.assertIn(art_id, wl._SOURCES)
         finally:
             for p in (self.core_parent, os.path.join(repo, "skills", "deliverables", "scripts"),
-                      os.path.join(repo, "skills", "deliverable-review", "scripts")):
+                      os.path.join(repo, "skills", "adversarial-review", "scripts")):
                 if p in sys.path:
                     sys.path.remove(p)
 

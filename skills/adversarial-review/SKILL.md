@@ -1,26 +1,36 @@
 ---
-name: "anti-legacy:deliverable-review"
+name: "anti-legacy:adversarial-review"
 description: >
-  Adversarial review of the rendered stakeholder deliverables — one READ-ONLY critic
-  subagent per deliverable, run in PARALLEL. Each critic challenges its rendered file in
-  .anti-legacy/deliverables/ against the SOURCE DATA it was rendered from, hunting
-  unsupported/optimistic claims, dropped §2 traceability (req_id→legacy_components→rule),
-  empty/weak sections, missing parity rules on numeric outputs, "done" that hides gaps, and
-  divergence from the requirements graph. Returns a structured per-deliverable verdict
-  (findings[] with severity → PASS / REVISE / BLOCK). Advisory: it never clears a gate.
-  Use when: "review the deliverables", "adversarial review", "critique the deliverables",
-  "challenge the PRD / risk log / migration plan", "are the deliverables honest".
+  Universal adversarial review of ANY generated / AI-derived output — a READ-ONLY critic that
+  challenges a produced artifact against the SOURCE DATA it was derived from, INDIVIDUALLY (one
+  artifact) or in PARALLEL batch (e.g. every rendered deliverable). It hunts unsupported/optimistic
+  claims, dropped §2 traceability (req_id→legacy_components→rule), empty/weak sections, missing
+  parity rules on numeric outputs, "done" that hides gaps, and divergence from the requirements
+  graph. Targets: deliverables (.anti-legacy/deliverables/), skill-forge's generated build skills
+  (.anti-legacy/generated-skills/), and any single produced artifact. Returns a structured verdict
+  (findings[] with severity → PASS / REVISE / BLOCK). Advisory: it never clears a gate. The
+  pre-build analog of anti-legacy:uat-reviewer (which critiques built code).
+  Use when: "adversarial review", "critique this output", "review the deliverables", "review the
+  generated build skills", "challenge the PRD / risk log / plan", "is this output honest".
 ---
 
-# anti-legacy:deliverable-review
+# anti-legacy:adversarial-review
 
-An **adversarial review pass** over the rendered deliverables package. After
-`anti-legacy:deliverables` renders the deliverables and compiles the index, this skill
-dispatches **one read-only critic subagent per deliverable** to try to *break* it — to find
-the claim the data does not support, the requirement whose traceability thread snapped, the
-section that is empty, the numeric output with no parity rule, the "complete" that is hiding
-a gap. The mining renders are deterministic and trusting; this is the loop that distrusts
-them (`make → adversarial-review → refine`, per MIGRATION_FACTORY_MINING B3/B4).
+A **universal adversarial review pass** over *any* generated / AI-derived output. Every producer
+in this pipeline emits artifacts FROM structured data; this skill dispatches a **read-only critic
+subagent** to try to *break* one — to find the claim the data does not support, the requirement
+whose traceability thread snapped, the section that is empty, the numeric output with no parity
+rule, the "complete" that is hiding a gap. Run it **individually** on a single output (point the
+critic at the artifact + the data it came from), or in **parallel batch** over a producer's
+outputs. The renders are deterministic and trusting; this is the loop that distrusts them
+(`make → adversarial-review → refine`, per MIGRATION_FACTORY_MINING). It is the pre-build analog
+of `anti-legacy:uat-reviewer` (which critiques *built* code) — the same independent read-only
+critic contract, applied to pre-build artifacts.
+
+**Targets** (any one, individually, or a batch): rendered deliverables (`.anti-legacy/deliverables/`,
+via the `deliverable_review_worklist` batch helper), skill-forge's generated build skills
+(`.anti-legacy/generated-skills/build-<domain>/SKILL.md`), and any other produced artifact (a
+blueprint, a requirements graph, a doc) — point the critic at the file + its source data.
 
 The mental model: a deliverable is rendered FROM structured data (the requirements graph,
 blueprint, contracts, coverage, manifest/audit). Its only legitimate content is content that
@@ -76,7 +86,7 @@ with `present: true`, dispatch a critic with this micro-context (the rendered fi
 `source_data` + the deliverable's identity — NOT the whole workspace, §5):
 
 ```
-anti-legacy:deliverable-review (critic)
+anti-legacy:adversarial-review (critic)
 
 ## Adversarial review — {label} ({artifact_id})
 

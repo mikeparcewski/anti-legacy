@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""anti-legacy:deliverable-review — assemble the per-deliverable critic worklist.
+"""anti-legacy:adversarial-review — assemble the per-deliverable critic worklist.
 
-`anti-legacy:deliverable-review` dispatches one READ-ONLY critic subagent per rendered
+`anti-legacy:adversarial-review` dispatches one READ-ONLY critic subagent per rendered
 deliverable. A critic cannot adversarially challenge a deliverable without two things:
 the RENDERED file (what the stakeholder will read) and the SOURCE DATA the deliverable was
 rendered FROM (the ground truth it must NOT diverge from). Picking those two — per

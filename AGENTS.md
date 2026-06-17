@@ -152,7 +152,7 @@ After 3 failed attempts at the same problem: stop. Send a read-only recon agent 
 | Writing test contracts per requirement | `anti-legacy:test-strategy` |
 | Compiling team review document | `anti-legacy:review-packet` |
 | Producing the stakeholder deliverables package (graph ready → PRD, diagrams, test strategy + scripts, migration plan, risk/decisions/evidence logs) | `anti-legacy:deliverables` |
-| Adversarial review of the rendered deliverables (parallel read-only critic per deliverable → PASS/REVISE/BLOCK; advisory, not a gate) | `anti-legacy:deliverable-review` |
+| Adversarial review of ANY generated output — individually or batch (read-only critic vs its source data → PASS/REVISE/BLOCK; advisory, not a gate; the pre-build analog of `anti-legacy:uat-reviewer`) | `anti-legacy:adversarial-review` |
 | Detailed product requirements (PRD) | `anti-legacy:prd` |
 | Architecture diagrams (Mermaid) | `anti-legacy:diagrams` |
 | Detailed functional test strategy (data-parity / UAT / E2E / API) | `anti-legacy:test-plan` |
@@ -192,6 +192,7 @@ All scripts are invoked through the workspace dispatcher: `python3 .anti-legacy/
 | `graph_normalizer` | Code graph → draft requirements scaffold (pinned reference; `domain_graph` is the production §I5 builder) | Front-half rule extraction (that is `extraction`) |
 | `validator_discovery` | The build/semantic/UAT verifier — runs build tooling, writes evidence (`run --gate <id>`) | Clearing a gate manually |
 | `packet_generator` | Requirements graph → offline Markdown packet | Replacing the human review |
+| `capability_graph` | md-as-code self-introspection of an **agentic** codebase: classifies `skills/*/SKILL.md` (frontmatter `name:`) as behavior vs reference/docs, mines capabilities + triggers, joins the manifest phase/gate model → JSON or the static feature page (`--site site/features.html`) | Indexing the **legacy estate** (that is `wicked_estate index`) — this introspects the plugin's own skills, not target/legacy source |
 
 `python3 .anti-legacy/run.py manifest status` is the authoritative pipeline state. File presence is not.
 
