@@ -66,9 +66,10 @@ Recording any gate `failed` (`manifest gate <ID> --opinion failed`) triggers a *
 | `gate-plan-review` | GATE_2_PLAN |
 | `gate-build-integrity` | GATE_3_BUILD **and** GATE_3B_SEMANTIC |
 | `gate-uat-signoff` | GATE_4_UAT |
+| `document` | GATE_4_UAT |
 | `final-review` | GATE_5_COMPLETENESS |
 
-If a required gate is not `passed`/`waived`, `advance` exits non-zero and the phase is unchanged — sign or waive the gate first. GATE_0_DISCOVERY and GATE_1B_SEMANTIC_JOIN are intentionally NOT in this map: neither has a dedicated `gate-*` phase enum value (GATE_0 is post-survey automated; GATE_1B is the optional semantic-join side phase), so they are enforced by their own skills and runners, not by the advance precondition. `final-review` is the only non-`gate-*`-named phase in the map: it is itself the completeness-gate phase, so leaving it requires GATE_5_COMPLETENESS.
+If a required gate is not `passed`/`waived`, `advance` exits non-zero and the phase is unchanged — sign or waive the gate first. GATE_0_DISCOVERY and GATE_1B_SEMANTIC_JOIN are intentionally NOT in this map: neither has a dedicated `gate-*` phase enum value (GATE_0 is post-survey automated; GATE_1B is the optional semantic-join side phase), so they are enforced by their own skills and runners, not by the advance precondition. Two **non-`gate-*`-named** phases are still in the map: `document` (ISS-9 — leaving it requires GATE_4_UAT, so the documentation pass can't feed the completeness review ahead of UAT sign-off; this also closes the phase-jump bypass of skipping `gate-uat-signoff`) and `final-review` (it is itself the completeness-gate phase, so leaving it requires GATE_5_COMPLETENESS). Entering either is always allowed — only the exit gates.
 
 ### Producer readiness gate (precheck)
 

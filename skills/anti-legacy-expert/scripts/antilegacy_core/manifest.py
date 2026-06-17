@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 MANIFEST_PATH = ".anti-legacy/manifest.json"
 
-# Gate-precondition map (B2). Maps each gate-* PHASE to the gate id(s) that must be
+# Gate-precondition map (B2). Maps each gate-bound PHASE to the gate id(s) that must be
 # status in {passed, waived} BEFORE the pipeline may LEAVE that phase. The check is
 # applied in cmd_advance against the CURRENT phase (i.e. on EXIT of a gate phase), so
 # advancing INTO a gate phase (e.g. review-packet -> gate-design-review) is always
@@ -32,19 +32,27 @@ MANIFEST_PATH = ".anti-legacy/manifest.json"
 #   'gate-plan-review'      -> ['GATE_2_PLAN']
 #   'gate-build-integrity'  -> ['GATE_3_BUILD', 'GATE_3B_SEMANTIC']
 #   'gate-uat-signoff'      -> ['GATE_4_UAT']
+#   'document'              -> ['GATE_4_UAT']            (ISS-9; see note below)
+#   'final-review'          -> ['GATE_5_COMPLETENESS']
 #
 # GATE_1B_SEMANTIC_JOIN and GATE_0_DISCOVERY are intentionally NOT in this map: neither
 # has a dedicated gate-* phase enum value (semantic-join is an optional pre-survey side
 # phase; discovery is a survey concern), so there is no gate phase to gate on exit.
 #
-# GATE_5_COMPLETENESS sits on the final-review phase: it auto-clears on a passing
-# completeness-report and kicks back (resets phase) on a FAIL, exactly like the build
-# gate, so it is precondition-bound to its own gate-* phase here.
+# Two NON-gate-*-named phases are still precondition-bound here:
+#  - 'document' (ISS-9): the documentation pass must not feed the completeness review
+#    (final-review) ahead of UAT sign-off, so LEAVING document requires GATE_4_UAT. This
+#    also closes the phase-jump bypass (advancing straight to `document`, skipping
+#    gate-uat-signoff). Entering document stays free; only document -> final-review gates.
+#  - 'final-review': GATE_5_COMPLETENESS auto-clears on a passing completeness-report and
+#    kicks back (resets phase) on a FAIL, exactly like the build gate, so leaving
+#    final-review (-> complete) is precondition-bound to its own gate.
 GATE_PHASE_PRECONDITIONS = {
     "gate-design-review": ["GATE_1_DESIGN"],
     "gate-plan-review": ["GATE_2_PLAN"],
     "gate-build-integrity": ["GATE_3_BUILD", "GATE_3B_SEMANTIC"],
     "gate-uat-signoff": ["GATE_4_UAT"],
+    "document": ["GATE_4_UAT"],
     "final-review": ["GATE_5_COMPLETENESS"],
 }
 
@@ -76,7 +84,8 @@ _SATISFIED_GATE_STATUSES = {"passed", "waived"}
 # Legal phase enum values (must match schemas/manifest.schema.json phase.current enum).
 # Three phases added by B1a wiring:
 #   - functional-tests: blocking pre-build validation, AFTER gate-plan-review, BEFORE build
-#   - document:         documentation pass, AFTER gate-uat-signoff, BEFORE final-review
+#   - document:         documentation pass, AFTER gate-uat-signoff, BEFORE final-review;
+#                       leaving it requires GATE_4_UAT passed/waived (ISS-9)
 #   - final-review:     automated completeness gate (GATE_5_COMPLETENESS), AFTER document,
 #                       BEFORE complete — auto-clears on a passing completeness-report and
 #                       kicks back on FAIL

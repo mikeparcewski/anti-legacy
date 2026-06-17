@@ -174,13 +174,40 @@ class TestManifestManager(unittest.TestCase):
 
     def test_new_phases_are_legal_advance_targets(self):
         """B1a: the three new phases (functional-tests, document, final-review) are in the
-        phase enum and can be advanced to."""
+        phase enum and can be advanced to. Leaving `document` now gates on GATE_4_UAT
+        (ISS-9), so we waive it before the document -> final-review hop."""
         self._run("init", "--name", "test")
         for phase in ("functional-tests", "document", "final-review"):
+            if phase == "final-review":  # leaving `document` requires GATE_4_UAT (ISS-9)
+                self._run("gate", "GATE_4_UAT", "--opinion", "waived",
+                          "--evaluator", "human", "--rationale", "test: reach final-review")
             res = self._run("advance", phase)
             self.assertEqual(res.returncode, 0,
                              f"Advancing to new phase {phase!r} should succeed: {res.stderr}")
             self.assertEqual(self._load_manifest()["phase"]["current"], phase)
+
+    def test_advance_blocked_leaving_document_until_gate4(self):
+        """ISS-9: leaving the `document` phase requires GATE_4_UAT passed/waived — the docs
+        pass must not feed the completeness review ahead of UAT sign-off. Entering document
+        stays free (the check fires on EXIT), exactly like the gate-* phases."""
+        self._run("init", "--name", "test")
+        self._run("advance", "document")  # entering is always allowed
+        self.assertEqual(self._load_manifest()["phase"]["current"], "document")
+
+        # GATE_4 pending -> leaving document is blocked.
+        res = self._run("advance", "final-review")
+        self.assertEqual(res.returncode, 2,
+                         f"Pending GATE_4 should block leaving document: {res.stderr}")
+        self.assertEqual(self._load_manifest()["phase"]["current"], "document")
+
+        # Waiving GATE_4 satisfies the precondition (explicit human override).
+        res = self._run("gate", "GATE_4_UAT", "--opinion", "waived",
+                        "--evaluator", "human", "--rationale", "uat accepted")
+        self.assertEqual(res.returncode, 0, f"Waive failed: {res.stderr}")
+        res = self._run("advance", "final-review")
+        self.assertEqual(res.returncode, 0,
+                         f"Leaving document after GATE_4 waive should succeed: {res.stderr}")
+        self.assertEqual(self._load_manifest()["phase"]["current"], "final-review")
 
     def test_failed_gate_kicks_back_to_producing_phase(self):
         """B1a: recording a gate FAILED resets phase.current to that gate's producing phase,
@@ -257,6 +284,9 @@ class TestManifestManager(unittest.TestCase):
         self.assertEqual(m["phase"]["current"], "document")
 
         # A clean PASS with registered evidence does NOT reset the phase.
+        # Leaving `document` requires GATE_4_UAT (ISS-9) — satisfy it before the hop.
+        self._run("gate", "GATE_4_UAT", "--opinion", "waived",
+                  "--evaluator", "human", "--rationale", "uat accepted")
         self._run("advance", "final-review")
         self._write_evidence("completeness_report.json", '{"status": "PASS"}')
         self._run("register", "completeness-report", "--path", "completeness_report.json",
