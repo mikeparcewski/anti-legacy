@@ -70,9 +70,12 @@ def _ordered_component_ids(components, blueprint):
         local = comp.get("build_order")
         local = local if isinstance(local, int) else None
         # 1) position in the blueprint's global build_order (authoritative);
-        # 2) per-component build_order int as a fallback ordering signal;
+        # 2) per-component build_order int as a fallback; a component WITHOUT a local
+        #    order must sort AFTER any component that HAS one, regardless of magnitude —
+        #    so use float('inf'), not `sentinel` (a local order >= sentinel, or sentinel==0
+        #    when there is no global build_order, otherwise sorts incorrectly);
         # 3) insertion index, to keep the sort stable for unordered components.
-        return (pos.get(rid, sentinel), sentinel if local is None else local, i)
+        return (pos.get(rid, sentinel), local if local is not None else float("inf"), i)
 
     return [rid for _, rid in sorted(enumerate(components.keys()), key=key)]
 

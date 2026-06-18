@@ -132,6 +132,16 @@ class SkillForgeTest(unittest.TestCase):
         self.assertIn("2. `AService`", skill)
         self.assertIn("3. `BService`", skill)
 
+    def test_local_build_order_beats_unordered_regardless_of_magnitude(self):
+        """ISS-18 review (HIGH): with NO global build_order (sentinel==0), a component WITH a
+        local build_order must still sort BEFORE one WITHOUT it. The old key used `sentinel` as
+        the no-local fallback, so an unordered component (key 0) sorted ahead of an explicitly
+        ordered one (key 5) — wrong. The fix uses float('inf') for the no-local case."""
+        order = skill_forge._ordered_component_ids(
+            {"REQ-Y": {}, "REQ-X": {"build_order": 5}},  # declared Y, X; only X is ordered
+            {})  # no global build_order -> sentinel == 0 (the bug trigger)
+        self.assertEqual(order, ["REQ-X", "REQ-Y"])  # explicit-order X first; unordered Y last
+
     # -- ISS-19: project_name has no unreachable branch; empty-components domain is handled -- #
 
     def test_project_name_resolves_from_nested_config_project_name(self):
