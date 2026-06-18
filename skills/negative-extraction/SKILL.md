@@ -68,7 +68,7 @@ the primary rule. Per node:
 
 ```bash
 python3 .anti-legacy/run.py wicked_estate --db <db> source <node_name>        # re-read the body for guards/handlers
-python3 .anti-legacy/run.py wicked_estate --db <db> blast-radius <node_name>  # ring+1 candidates
+python3 .anti-legacy/run.py wicked_estate --db <db> query <node_name>         # ring+1 callees (error-handling deps, 1 DOWN)
 python3 .anti-legacy/run.py wicked_estate --db <db> source <error_helper>     # read the error/validation callee
 ```
 
@@ -87,7 +87,9 @@ every time:
 1. **ring[0]** = the resolved node's own body (already read by extraction). Seed the frontier with
    its error-bearing edges only.
 2. **ring[k] → ring[k+1]**: from every node added at ring[k], follow ONLY error-bearing edges
-   (the hunt list above) via `blast-radius`, read each new callee's `source`, and collect the
+   (the hunt list above) via `query` (1-DOWN dependencies — the error-handling callees a node
+   invokes; `query` lists callees, `blast-radius` lists callers — see `anti-legacy:extraction`),
+   read each new callee's `source`, and collect the
    **NEW error-relevant nodes** (not seen at any shallower ring — dedupe by SymbolId).
 3. **STOP when EITHER terminal is hit — whichever comes first:**
    - **(a) Fixpoint** — ring[k+1] discovers **zero new error-bearing nodes** (the error surface is

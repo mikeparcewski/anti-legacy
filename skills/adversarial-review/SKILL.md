@@ -194,7 +194,6 @@ The `checklist` is REQUIRED and carries all six classes (the keys above are exac
 `"finding"` has ≥1 matching finding of that `category`; a class marked `"clean"` has none.
 A verdict missing the `checklist`, missing any of the six classes, or leaving any class
 `covered: false` is INVALID per the anti-rubber-stamp rules — re-run that critic.
-```
 
 For CLIs without `@agent` dispatch, run the critics inline — adopt the critic persona for
 each deliverable in turn and produce the same JSON. Do not let inline mode collapse into a
