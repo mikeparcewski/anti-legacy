@@ -132,8 +132,9 @@ def _well_formed_enriched_req():
         "data_access": ["CUSTOMER"],
         "dependencies": [],
         "business_rules": [
-            {"id": "RULE-001", "statement": "Accounts need a unique id."},
-            {"id": "RULE-002", "statement": "Balance updates preserve the ledger."},
+            # ISS-11: every business_rule now REQUIRES a numeric confidence in [0,1].
+            {"id": "RULE-001", "statement": "Accounts need a unique id.", "confidence": 0.95},
+            {"id": "RULE-002", "statement": "Balance updates preserve the ledger.", "confidence": 0.9},
         ],
         "validations": [
             {"id": "VAL-001", "statement": "Status in {A,C,S}.",
@@ -293,4 +294,72 @@ def test_t3_enriched_accepts_well_formed_requirement(repo_root):
     assert not errors, (
         "enriched profile rejected a well-formed enriched requirement:\n  "
         + "\n  ".join(e.message for e in errors)
+    )
+
+
+# ===========================================================================
+# ISS-11  --  business_rules[].confidence is REQUIRED + numeric (0..1).
+# A confidence-less / non-numeric-confidence rule is a HARD enriched-profile
+# failure (was previously only a risk-log warning / runtime precheck probe).
+# ===========================================================================
+def test_t3_enriched_requires_numeric_confidence_on_rules(repo_root):
+    """STRUCTURE tier (no jsonschema): the enriched `rule` $def must list
+    `confidence` in its `required` array AND type it as number 0..1. Confidence
+    must NOT become required on validation/errorPath (it stays additive there)."""
+    enriched = _load_json(_enriched_schema_path(repo_root))
+    defs = enriched.get("$defs", {})
+    rule = defs.get("rule", {})
+    assert "confidence" in rule.get("required", []), (
+        "ISS-11: enriched $defs.rule must REQUIRE 'confidence'; required is "
+        f"{rule.get('required')!r}"
+    )
+    conf = rule.get("properties", {}).get("confidence", {})
+    assert conf.get("type") == "number", (
+        f"ISS-11: $defs.rule.confidence must be a number, got {conf!r}"
+    )
+    assert conf.get("minimum") == 0 and conf.get("maximum") == 1, (
+        f"ISS-11: $defs.rule.confidence must be bounded to [0,1], got {conf!r}"
+    )
+    for other in ("validation", "errorPath"):
+        assert "confidence" not in defs.get(other, {}).get("required", []), (
+            f"ISS-11 scope: confidence must stay OPTIONAL on $defs.{other} "
+            f"(only `rule` requires it); required is "
+            f"{defs.get(other, {}).get('required')!r}"
+        )
+
+
+@_NEEDS_JSONSCHEMA
+def test_t3_enriched_rejects_rule_without_confidence(repo_root):
+    """VALIDATION tier (ISS-11): a business_rule lacking `confidence` must FAIL
+    the enriched profile."""
+    if not os.path.exists(_enriched_schema_path(repo_root)):
+        pytest.fail("enriched overlay schema absent; cannot validate")
+    enriched, resolver = _resolve_enriched_for_validation(repo_root)
+    validator = Draft7Validator(enriched, resolver=resolver)
+
+    req = _well_formed_enriched_req()
+    for rule in req["business_rules"]:
+        rule.pop("confidence", None)  # strip the now-required confidence
+    errors = list(validator.iter_errors(_wrap_single_req(req)))
+    assert errors, (
+        "ISS-11: enriched profile accepted a business_rule with NO confidence "
+        "(numeric confidence must be required)"
+    )
+
+
+@_NEEDS_JSONSCHEMA
+def test_t3_enriched_rejects_non_numeric_confidence(repo_root):
+    """VALIDATION tier (ISS-11): a business_rule whose `confidence` is a string
+    (e.g. 'high') must FAIL — the field must be numeric in [0,1]."""
+    if not os.path.exists(_enriched_schema_path(repo_root)):
+        pytest.fail("enriched overlay schema absent; cannot validate")
+    enriched, resolver = _resolve_enriched_for_validation(repo_root)
+    validator = Draft7Validator(enriched, resolver=resolver)
+
+    req = _well_formed_enriched_req()
+    req["business_rules"][0]["confidence"] = "high"  # non-numeric
+    errors = list(validator.iter_errors(_wrap_single_req(req)))
+    assert errors, (
+        "ISS-11: enriched profile accepted a non-numeric confidence "
+        "('high'); confidence must be a number in [0,1]"
     )

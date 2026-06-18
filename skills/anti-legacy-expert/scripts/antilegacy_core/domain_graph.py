@@ -595,6 +595,18 @@ def _clamp_conf(value):
     return c
 
 
+# ISS-11: business_rules[].confidence is now REQUIRED + numeric in the enriched
+# schema, so every rule object MUST carry one. These are the honest fallbacks for
+# the rule paths that have no extraction-derived confidence:
+#   * REVIEW/unaccounted legacy rules -> 0.0 (unverified; flagged for human research)
+#   * curator-authored net-new rules  -> 1.0 (the curator's explicit assertion is
+#                                              the source of truth for net-new)
+#   * the "pending authoring" net-new placeholder -> 0.0 (no rule stated yet)
+_REVIEW_RULE_CONFIDENCE = 0.0
+_NET_NEW_RULE_CONFIDENCE = 1.0
+_PENDING_RULE_CONFIDENCE = 0.0
+
+
 # GOTCHA-3 trust-tier discriminator. The enriched schema declares
 # provenance.source_kinds as an OPTIONAL enum array; these four are the ONLY
 # legal members. A rule is trusted_verified ONLY when grounded in code-body
@@ -640,8 +652,10 @@ def _rule_object(rule_id, statement, symbol_id, app_name, annotation):
         "source_ref": symbol_id,
     }
     conf = _clamp_conf(annotation.get("confidence")) if annotation else None
-    if conf is not None:
-        obj["confidence"] = round(conf, 6)
+    # ISS-11: confidence is REQUIRED on every business_rule. A resolved rule
+    # carries its extraction confidence; a REVIEW/unaccounted/unannotated member
+    # (annotation absent or confidence-less) is unverified -> the review floor.
+    obj["confidence"] = round(conf if conf is not None else _REVIEW_RULE_CONFIDENCE, 6)
     program = None
     if annotation:
         program = annotation.get("name") or annotation.get("program")
@@ -944,6 +958,7 @@ def build_requirement(app: dict, label, member_ids, settings):
         rule_objects.append({
             "id": "RULE-001",
             "statement": "UNRESOLVABLE: capability has no annotated behavior rule",
+            "confidence": _REVIEW_RULE_CONFIDENCE,  # ISS-11: unverified placeholder
             "provenance": {"source_app": app_name},
         })
 
@@ -1163,12 +1178,14 @@ def build_net_new_requirement(spec):
         rule_objects.append({
             "id": "RULE-%03d" % (len(rule_objects) + 1),
             "statement": statement,
+            "confidence": _NET_NEW_RULE_CONFIDENCE,  # ISS-11: curator-asserted
             "provenance": {"source_app": "net-new"},
         })
     if not rule_objects:
         rule_objects.append({
             "id": "RULE-001",
             "statement": "NET-NEW: target capability pending rule authoring",
+            "confidence": _PENDING_RULE_CONFIDENCE,  # ISS-11: no rule stated yet
             "provenance": {"source_app": "net-new"},
         })
 
