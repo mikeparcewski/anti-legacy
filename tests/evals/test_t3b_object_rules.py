@@ -225,15 +225,24 @@ def test_t3b_enriched_defs_whitelist_confidence_and_provenance(repo_root):
 
 
 def test_t3b_additive_fields_stay_optional(repo_root):
-    """confidence + provenance are ADDITIVE -- required must remain exactly
-    {id, statement} on every enriched $def (the residual must not silently
-    tighten the contract)."""
+    """provenance is ADDITIVE everywhere; confidence is ADDITIVE on
+    validation/errorPath. ISS-11 tightens ONLY the `rule` $def to additionally
+    REQUIRE a numeric confidence (a confidence-less business_rule is a hard
+    GATE_1 failure), so rule.required == {id, statement, confidence}; the other
+    two $defs keep required == {id, statement}. provenance must never become
+    required on any $def."""
+    expected_required = {
+        "rule": {"id", "statement", "confidence"},  # ISS-11: confidence required on rules
+        "validation": {"id", "statement"},
+        "errorPath": {"id", "statement"},
+    }
     defs = _enriched_defs(repo_root)
     for name in ("rule", "validation", "errorPath"):
         req = set(defs.get(name, {}).get("required", []))
-        assert req == {"id", "statement"}, (
-            f"$defs.{name}.required must stay exactly {{id, statement}}; "
-            f"confidence/provenance must NOT become required. Got: {sorted(req)}"
+        assert req == expected_required[name], (
+            f"$defs.{name}.required must be exactly {sorted(expected_required[name])}; "
+            f"provenance must NOT become required (and confidence stays optional "
+            f"on validation/errorPath). Got: {sorted(req)}"
         )
 
 
@@ -478,7 +487,9 @@ def test_t3b_gate1_accepts_object_form_rules(tmp_path):
     from antilegacy_core import validator_discovery
     ws = _write_workspace(
         tmp_path,
-        [{"id": "RULE-001", "statement": "an object-form rule"}],
+        # ISS-11: business_rules now REQUIRE a numeric confidence, so a
+        # well-formed object-form rule must carry one for GATE_1 to accept it.
+        [{"id": "RULE-001", "statement": "an object-form rule", "confidence": 0.9}],
     )
     runner = validator_discovery.ValidatorRunner(
         ws,

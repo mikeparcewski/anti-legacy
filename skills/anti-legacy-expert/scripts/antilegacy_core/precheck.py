@@ -16,15 +16,21 @@ by probing four categories:
 
 READ-ONLY: never writes audit.jsonl, never advances a phase, never clears a gate.
 
-CLI:   python3 .anti-legacy/run.py precheck <phase> [--advisory] [--json]
+CLI:   python3 .anti-legacy/run.py precheck <phase> [--advisory] [--json] [--strict]
          exit 0 = ready · 1 = NOT ready (blocking) · 2 = bad arg.
          --advisory : always exit 0 and just report (the engine-scan "exit-code flips by
                       caller" pattern — reporting vs gating).
          --json     : machine-readable {phase, ready, probes:[...]}.
+         --strict   : ISS-22 — treat an UNLISTED phase (one with no PHASE_READINESS
+                      profile) as a hard BLOCK instead of a warn-pass, so a new
+                      producer cannot silently skip readiness gating. Default is
+                      lenient (backward-compatible); also enabled by the
+                      PRECHECK_STRICT env var (--strict wins when both are present).
 
 In-process:
-  check(phase) -> (ready: bool, probes: list[dict])
-  require_ready(phase, force=False) -> None  (prints blockers + sys.exit(1) unless force)
+  check(phase, strict=None) -> (ready: bool, probes: list[dict])
+  require_ready(phase, force=False, strict=None) -> None  (prints blockers + sys.exit(1) unless force)
+    strict=None consults the PRECHECK_STRICT env var; pass strict=True/False to force the mode.
 
 Pure standard library + antilegacy_core.manifest helpers. Cross-platform (os.path).
 """
@@ -37,6 +43,18 @@ from antilegacy_core import manifest as mf
 
 WS = ".anti-legacy"
 RESOLVE_THRESHOLD_DEFAULT = 0.75
+
+# ISS-22: strict mode turns the unlisted-phase catch-all from a warn-pass into a
+# hard BLOCK, so a new producer with no PHASE_READINESS profile cannot silently
+# skip readiness gating. Opt-in (default lenient/backward-compatible): set the
+# env var PRECHECK_STRICT to a truthy value, pass strict=True in-process, or use
+# the --strict CLI flag.
+_STRICT_ENV = "PRECHECK_STRICT"
+
+
+def _strict_from_env():
+    """True iff PRECHECK_STRICT is set to a truthy value (1/true/yes/on, any case)."""
+    return os.environ.get(_STRICT_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 # --------------------------------------------------------------------------- #
@@ -182,8 +200,10 @@ def _shallow_extraction_probe(graph):
 
 
 # --------------------------------------------------------------------------- #
-# Per-phase readiness registry. Phases not listed get the generic fallback
-# (their required input artifacts present + verified).
+# Per-phase readiness registry. Phases not listed get the generic fallback:
+# a warn-pass by default (lenient), or a hard BLOCK under strict mode (ISS-22 —
+# `--strict` / PRECHECK_STRICT / check(strict=True)), so a new producer with no
+# profile cannot silently skip readiness gating.
 # --------------------------------------------------------------------------- #
 def _graph_completeness_probes(manifest):
     graph = _load_json(_ws("requirements", "requirements_graph.json"))
@@ -227,8 +247,17 @@ PHASE_READINESS = {
 }
 
 
-def check(phase):
-    """Return (ready, probes). `ready` is False iff any block-severity probe failed."""
+def check(phase, strict=None):
+    """Return (ready, probes). `ready` is False iff any block-severity probe failed.
+
+    strict (ISS-22): when an unlisted phase (no PHASE_READINESS profile) is checked,
+    the catch-all is a warn-pass by default (lenient, backward-compatible). In strict
+    mode it becomes a hard BLOCK so a new producer cannot silently skip readiness
+    gating. `strict=None` (default) falls back to the PRECHECK_STRICT env var; pass
+    strict=True/False to force the mode in-process.
+    """
+    if strict is None:
+        strict = _strict_from_env()
     if not os.path.isfile(_ws("manifest.json")):
         return False, [_probe("manifest", "artifact", False, "block",
                               "no .anti-legacy/manifest.json — workspace not initialized.",
@@ -237,10 +266,18 @@ def check(phase):
     spec = PHASE_READINESS.get(phase)
     probes = []
     if spec is None:
-        # generic fallback: nothing else known — succeed (no required inputs declared).
-        probes.append(_probe("phase:%s" % phase, "artifact", True, "warn",
-                             "no readiness profile for phase '%s' — only basic checks apply." % phase,
-                             "Add a PHASE_READINESS entry for '%s' in precheck.py." % phase))
+        # Unlisted phase. Lenient (default): warn-pass — only basic checks apply.
+        # Strict (ISS-22): BLOCK — refuse to run a producer with no readiness profile.
+        if strict:
+            probes.append(_probe("phase:%s" % phase, "artifact", False, "block",
+                                 "STRICT: phase '%s' has no PHASE_READINESS profile — "
+                                 "refusing to run an ungated producer." % phase,
+                                 "Add a PHASE_READINESS entry for '%s' in precheck.py "
+                                 "(or drop --strict / unset PRECHECK_STRICT to allow it)." % phase))
+        else:
+            probes.append(_probe("phase:%s" % phase, "artifact", True, "warn",
+                                 "no readiness profile for phase '%s' — only basic checks apply." % phase,
+                                 "Add a PHASE_READINESS entry for '%s' in precheck.py." % phase))
         spec = {"gates": [], "artifacts": [], "completeness": lambda m: []}
     for gid in spec.get("gates", []):
         probes.append(_gate_probe(manifest, gid))
@@ -254,9 +291,15 @@ def check(phase):
     return ready, probes
 
 
-def require_ready(phase, force=False):
-    """Producer-side gate: refuse to proceed unless `phase` is ready (ROOT A). Lazy-import safe."""
-    ready, probes = check(phase)
+def require_ready(phase, force=False, strict=None):
+    """Producer-side gate: refuse to proceed unless `phase` is ready (ROOT A). Lazy-import safe.
+
+    strict (ISS-22): forwarded to check() — when True, an unlisted phase (no
+    PHASE_READINESS profile) BLOCKS instead of warn-passing. `strict=None` (default)
+    consults the PRECHECK_STRICT env var, so a producer stays backward-compatible
+    unless strictness is explicitly opted in.
+    """
+    ready, probes = check(phase, strict=strict)
     for w in [p for p in probes if not p["ok"] and p["severity"] == "warn"]:
         sys.stderr.write("precheck WARN [%s]: %s\n" % (w["id"], w["detail"]))
     blockers = [p for p in probes if not p["ok"] and p["severity"] == "block"]
@@ -292,9 +335,15 @@ def main(argv=None):
     ap.add_argument("--advisory", action="store_true",
                     help="always exit 0 (report only) instead of gating")
     ap.add_argument("--json", action="store_true", help="machine-readable JSON report")
+    ap.add_argument("--strict", action="store_true",
+                    help="ISS-22: treat an unlisted phase (no PHASE_READINESS profile) as a "
+                         "hard BLOCK instead of a warn-pass — refuse to run an ungated producer "
+                         "(also enabled by the PRECHECK_STRICT env var). Default: lenient.")
     args = ap.parse_args(argv)
 
-    ready, probes = check(args.phase)
+    # --strict OR the env var enables strict mode (CLI flag wins when set).
+    strict = True if args.strict else _strict_from_env()
+    ready, probes = check(args.phase, strict=strict)
     if args.json:
         json.dump({"phase": args.phase, "ready": ready, "probes": probes}, sys.stdout, indent=2)
         sys.stdout.write("\n")
