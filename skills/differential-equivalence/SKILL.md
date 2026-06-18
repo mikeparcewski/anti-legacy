@@ -45,9 +45,13 @@ standard golden a migration team builds when the mainframe isn't runnable — no
 
 ## Inputs
 
-- **Golden corpus** (`corpus.json`): `[{ "scenario_id", "req_id", "inputs"?, "golden_output": {field: value, …} }, …]`
+- **Golden corpus** (`corpus.json`): `[{ "scenario_id", "req_id", "inputs"?, "golden_output": {field: value, …}, "provenance"?, "capture"? }, …]`
   — the legacy outputs per scenario. Reuse the `scenarios[].inputs` from the test contracts as the
-  input vectors; the `golden_output` is what the *legacy* system produced for them.
+  input vectors; the `golden_output` is what the *legacy* system produced for them. Each entry's
+  `provenance` grades its trust (`anti-legacy:capture-corpus` stamps it). An entry claiming
+  `captured-legacy` (the only blocking tier) **must** carry a `capture` attestation
+  (`{method, source, captured_at}`, ISS-24) — without it the harness downgrades the entry's
+  effective confidence to **low** and adds a warning, so a bare label cannot reach BLOCK.
 - **Target actual outputs** (`actuals.json`): `{ "<scenario_id>": {field: value, …}, … }` — run the
   built target over the same inputs and capture its outputs keyed by `scenario_id`.
 - **Contracts** (`.anti-legacy/contracts/{domain}/{req_id}.contract.json`): the `parity_rules`
@@ -84,8 +88,10 @@ NOT_APPLICABLE (the trust-graded stance — see below).
 ## Step 3: Register the evidence + record the gate (graded by posture)
 
 The gate is **provenance-graded** (ISS-7 follow-up): a parity FAIL against a low/medium-confidence
-golden is a **WARNING**, not a hard failure — only a FAIL against a **captured-legacy** golden
-blocks. Read `gate_posture` from the report:
+golden is a **WARNING**, not a hard failure — only a FAIL against an **attested captured-legacy**
+golden blocks. `golden_confidence` reaches `high` (the only BLOCK-reachable tier) ONLY when every
+captured-legacy entry carries a valid `capture` attestation (ISS-24); an unattested one is
+downgraded to `low` and surfaces as WARN. Read `gate_posture` from the report:
 
 ```bash
 python3 .anti-legacy/run.py manifest register differential-equivalence-report \
@@ -125,14 +131,37 @@ real legacy I/O, or supply a source oracle) before treating the divergence as a 
 golden itself may be wrong. Report every diverging field with its `scenario_id`, `req_id`, and the
 golden-vs-actual values (§6).
 
+## The golden_confidence rides downstream — never silently lost (ISS-25)
+
+A consumer that reads only the gate **status** can present a low/medium-confidence PASS as a clean
+"GATE_3C passed" — overselling an *assumed-behavior* agreement as real-legacy equivalence. The
+report already carries `golden_confidence` + `warnings`; the fix is to make that caveat **ride
+along** with the status everywhere it surfaces, not to rewrite the verdict:
+
+- Record the confidence **structurally** in the gate rationale, e.g.
+  `--rationale "posture=PASS; golden_confidence=low; <warning summary>"` — not a bare "passed".
+- Downstream renderers do the same: **`anti-legacy:evidence-log`** reads
+  `golden_confidence` from `evidence/differential-equivalence-report.json` and annotates the
+  GATE_3C row — `passed (golden confidence: low — assumed behavior, not captured legacy)` — plus a
+  caveat paragraph. Any stakeholder deliverable that cites GATE_3C must show the confidence too.
+
+**The inherent limit (epistemic, not a bug).** A `contract-expected` / `source-oracle` PASS can
+**never PROVE** real-legacy parity — it only proves the target agrees with *assumed/derived*
+behavior. That limit cannot be engineered away; the discipline is to **never hide the caveat**, so
+a low/medium PASS is read for exactly what it is. Only an **attested** `captured-legacy` PASS is an
+authoritative real-legacy parity proof.
+
 ## Done-gate
 
 - `differential-equivalence-report.json` exists with a `status` of `PASS`, `FAIL`, or
-  `NOT_APPLICABLE` and a populated `aggregate`.
-- The gate is recorded (`passed` on PASS/NOT_APPLICABLE with the registered evidence; `failed` on
-  FAIL, which kicks back to build).
-- Your report states (§6): what is verifiably equal (scenarios/fields within tolerance), what is
-  NOT proven (any NOT_APPLICABLE region = no corpus = unproven parity), and the next step.
+  `NOT_APPLICABLE` and a populated `aggregate`, plus `golden_confidence` + `warnings`.
+- The gate is recorded with the **`golden_confidence` carried in the rationale** (not a bare
+  opinion): `passed` on PASS/WARN/NOT_APPLICABLE with the registered evidence; `failed` only on a
+  captured-legacy BLOCK, which kicks back to build.
+- Your report states (§6): what is verifiably equal (scenarios/fields within tolerance), at **what
+  golden confidence** (and the explicit caveat that a low/medium PASS does NOT prove real-legacy
+  parity), what is NOT proven (any NOT_APPLICABLE region = no corpus = unproven parity), and the
+  next step.
 
 ## Cross-Platform Notes
 

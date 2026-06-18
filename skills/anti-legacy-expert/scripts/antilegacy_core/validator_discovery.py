@@ -774,6 +774,12 @@ class ValidatorRunner:
         contract-expected) WARNS loudly but returns success, because the golden may itself be wrong
         ("the data could be incorrect, and here is why"). Only a FAIL against a captured-legacy
         golden BLOCKS (returns False -> kick back to build).
+
+        ISS-24: 'captured-legacy' is machine-enforced, not trusted on its label — the report's
+        golden_confidence only reaches "high" when the captured-legacy entries carry a valid
+        capture attestation (run_harness downgrades unattested ones to low). So gate_posture()
+        returns BLOCK only for an ATTESTED captured-legacy FAIL; an unattested captured-legacy FAIL
+        surfaces here as WARN, never a hard block.
         """
         from antilegacy_core import differential_equivalence as de
         report_path = os.path.join(self.workspace, ".anti-legacy", "evidence",
