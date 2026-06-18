@@ -86,6 +86,34 @@ BUILD_CI_DIR_HINTS = (".github", ".gitlab-ci", ".circleci")
 # How many bytes to read per file (guards against pathological huge files).
 MAX_BYTES = 2_000_000
 
+# H4: Annotation stacking — coverage gaming detector.
+# A class carrying >= this many @ImplementsRule (or equivalent) annotations
+# is almost certainly stacking annotations to pass the global string-match
+# coverage check without implementing the business logic behind each rule.
+ANNOTATION_DENSITY_LIMIT = 8
+_IMPL_RULE_ANNO_RE = re.compile(
+    r"@(?:ImplementsRule|ImplementsRules|Rule|Implements)\s*[\(\{\[]",
+    re.IGNORECASE,
+)
+_CLASS_DECL_RE = re.compile(r"\b(?:class|struct|interface|object)\s+(\w+)")
+
+# H5: Reflection-only test detector (Java/Kotlin).
+# A test file that invokes Class.forName() or clazz.forName() extensively
+# with assertNotNull as its primary assertion pattern is testing classpath
+# existence, not behavioral correctness.
+_CLASS_FOR_NAME_RE = re.compile(r"\bClass\.forName\s*\(", re.IGNORECASE)
+_ASSERT_NOT_NULL_RE = re.compile(r"\bassertNotNull\s*\(", re.IGNORECASE)
+_ANY_ASSERT_RE = re.compile(r"\bassert\w+\s*\(", re.IGNORECASE)
+_BUSINESS_CALL_RE = re.compile(
+    r"\.(get|set|calculate|compute|process|execute|run|find|save|update|delete"
+    r"|create|post|apply|submit|validate|transfer|charge|credit|debit)\w*\s*\(",
+    re.IGNORECASE,
+)
+# Minimum Class.forName calls before the reflection heuristic fires.
+_REFLECTION_CALL_THRESHOLD = 3
+# Max fraction of assertNotNull vs total asserts before we flag.
+_NULL_ASSERT_FRACTION_LIMIT = 0.80
+
 # ---------------------------------------------------------------------------
 # CODE dimension patterns.
 # ---------------------------------------------------------------------------
@@ -353,6 +381,61 @@ def scan_code(rel_path, lines):
                     "severity": "HIGH",
                     "what": "trivial function body (no-op): %s" % body[0][1].strip()[:120],
                 })
+
+    # H4: annotation stacking — coverage gaming detector.
+    # Scan class boundaries and count @ImplementsRule annotations per class.
+    # A class with >= ANNOTATION_DENSITY_LIMIT annotations is likely stacking
+    # them at the class header level to satisfy global string-match coverage
+    # checks without implementing the underlying business logic.
+    full_text = "\n".join(lines)
+    class_starts = list(_CLASS_DECL_RE.finditer(full_text))
+    prev_boundary = 0
+    for idx, m in enumerate(class_starts):
+        end = class_starts[idx + 1].start() if idx + 1 < len(class_starts) else len(full_text)
+        # Include the preamble before the class keyword so annotations that
+        # precede the class declaration (the common Java stacking pattern) are
+        # counted. The preamble window starts from the previous class keyword
+        # position (0 for the first class) so we do not double-count bodies.
+        block = full_text[prev_boundary:end]
+        prev_boundary = m.start()
+        ann_count = len(_IMPL_RULE_ANNO_RE.findall(block))
+        if ann_count >= ANNOTATION_DENSITY_LIMIT:
+            line_no = full_text[: m.start()].count("\n") + 1
+            class_name = m.group(1)
+            sev = "HIGH" if not is_test else "MEDIUM"
+            findings.append({
+                "line": line_no,
+                "severity": sev,
+                "what": (
+                    "annotation stacking — %d rule annotations on class '%s' "
+                    "(limit %d) suggests coverage gaming rather than implementation"
+                    % (ann_count, class_name, ANNOTATION_DENSITY_LIMIT)
+                ),
+            })
+
+    # H5: reflection-only test detector (Java/Kotlin).
+    # A test file that uses Class.forName() extensively with assertNotNull as
+    # its dominant assertion and no domain-method invocations is verifying
+    # classpath existence, not behavioral correctness.
+    if is_test and rel_path.lower().endswith((".java", ".kt")):
+        cfn_count = len(_CLASS_FOR_NAME_RE.findall(full_text))
+        if cfn_count >= _REFLECTION_CALL_THRESHOLD:
+            total_asserts = len(_ANY_ASSERT_RE.findall(full_text))
+            null_asserts = len(_ASSERT_NOT_NULL_RE.findall(full_text))
+            has_business_call = bool(_BUSINESS_CALL_RE.search(full_text))
+            null_frac = null_asserts / total_asserts if total_asserts > 0 else 0
+            if null_frac > _NULL_ASSERT_FRACTION_LIMIT and not has_business_call:
+                findings.append({
+                    "line": 1,
+                    "severity": "HIGH",
+                    "what": (
+                        "reflection-only test — %d Class.forName() calls, "
+                        "%d/%d assertions are assertNotNull, no domain-method invocations; "
+                        "tests verify classpath existence, not behavioral correctness"
+                        % (cfn_count, null_asserts, total_asserts)
+                    ),
+                })
+
     return findings
 
 

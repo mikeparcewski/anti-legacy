@@ -446,5 +446,171 @@ class TestFix4ConfigDevProfile(unittest.TestCase):
         )
 
 
+class TestH4AnnotationStacking(unittest.TestCase):
+    """H4: >=8 @ImplementsRule annotations on one class → HIGH (non-test) or MEDIUM (test)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="h4-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, content):
+        path = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def _make_stacked_class(self, n_annotations, classname="BillingService"):
+        annos = "\n".join(f'@ImplementsRule("RULE-{i:03d}")' for i in range(n_annotations))
+        return (
+            f"package com.acme;\n"
+            f"{annos}\n"
+            f"public class {classname} {{\n"
+            f"    public void run() {{}}\n"
+            f"}}\n"
+        )
+
+    def test_eight_annotations_fires_high_on_production_file(self):
+        self._write("src/main/java/BillingService.java",
+                    self._make_stacked_class(8))
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        stacking = [f for f in findings if "annotation stacking" in f["what"].lower()]
+        self.assertTrue(stacking, "expected annotation stacking finding with 8 annotations")
+        self.assertTrue(any(f["severity"] == "HIGH" for f in stacking),
+                        "non-test file with 8 annotations must be HIGH")
+
+    def test_seven_annotations_does_not_fire(self):
+        self._write("src/main/java/BillingService.java",
+                    self._make_stacked_class(7))
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        stacking = [f for f in findings if "annotation stacking" in f["what"].lower()]
+        self.assertEqual(stacking, [], "7 annotations is under the limit — must not fire")
+
+    def test_annotation_stacking_in_test_file_is_medium_not_high(self):
+        self._write("src/test/java/BillingServiceTest.java",
+                    self._make_stacked_class(10, "BillingServiceTest"))
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        stacking = [f for f in findings if "annotation stacking" in f["what"].lower()]
+        self.assertTrue(stacking, "expected annotation stacking finding in test file")
+        for f in stacking:
+            self.assertNotEqual(f["severity"], "HIGH",
+                                "annotation stacking in test file must not be HIGH")
+
+    def test_two_classes_independent_counts(self):
+        """Stacking on one class must not pollute the count of a neighbouring class."""
+        content = (
+            "package com.acme;\n"
+            + "\n".join(f'@ImplementsRule("RULE-{i:03d}")' for i in range(10))
+            + "\npublic class HeavyService {\n    public void run() {}\n}\n"
+            + "public class LightService {\n    @ImplementsRule(\"RULE-900\")\n    public void run() {}\n}\n"
+        )
+        self._write("src/main/java/Mixed.java", content)
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        stacking = [f for f in findings if "annotation stacking" in f["what"].lower()]
+        # HeavyService fires, LightService must not appear in stacking findings.
+        names = " ".join(f["what"] for f in stacking)
+        self.assertIn("HeavyService", names)
+        self.assertNotIn("LightService", names)
+
+
+class TestH5ReflectionOnlyTests(unittest.TestCase):
+    """H5: Java test files with >=3 Class.forName + >80% assertNotNull + no domain calls → HIGH."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="h5-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, content):
+        path = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def _reflection_only_test(self, n_classes=4):
+        """Returns Java test source with n_classes Class.forName calls and only assertNotNull."""
+        lines = ["package com.acme;", "import org.junit.jupiter.api.Test;",
+                 "public class ExistenceTest {"]
+        for i in range(n_classes):
+            lines += [
+                f"    @Test void class{i}Exists() throws Exception {{",
+                f'        Object c = Class.forName("com.acme.domain.Class{i}");',
+                f"        assertNotNull(c);",
+                "    }",
+            ]
+        lines.append("}")
+        return "\n".join(lines) + "\n"
+
+    def test_reflection_only_test_fires_high(self):
+        self._write("src/test/java/ExistenceTest.java",
+                    self._reflection_only_test(n_classes=4))
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        reflection = [f for f in findings if "reflection-only" in f["what"].lower()]
+        self.assertTrue(reflection, "expected reflection-only-test HIGH finding")
+        self.assertTrue(any(f["severity"] == "HIGH" for f in reflection))
+
+    def test_test_with_domain_calls_does_not_fire(self):
+        """A test that calls a real domain method must not trigger the reflection detector."""
+        content = (
+            "package com.acme;\n"
+            "import org.junit.jupiter.api.Test;\n"
+            "public class BillingTest {\n"
+            "    @Test void chargesCorrectly() throws Exception {\n"
+            "        Class<?> c = Class.forName(\"com.acme.BillingService\");\n"
+            "        assertNotNull(c);\n"
+            "        BillingService svc = new BillingService();\n"
+            "        BigDecimal result = svc.calculateCharge(account);\n"
+            "        assertEquals(expected, result);\n"
+            "    }\n"
+            "}\n"
+        )
+        self._write("src/test/java/BillingTest.java", content)
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        reflection = [f for f in findings if "reflection-only" in f["what"].lower()]
+        self.assertEqual(reflection, [],
+                         "test file with real domain calls must not fire reflection-only detector")
+
+    def test_fewer_than_threshold_class_for_name_does_not_fire(self):
+        """Two Class.forName calls is under the threshold (3) — must not fire."""
+        content = (
+            "package com.acme;\n"
+            "public class TwoReflectTest {\n"
+            "    @Test void a() throws Exception {\n"
+            "        Object c1 = Class.forName(\"com.acme.Foo\"); assertNotNull(c1);\n"
+            "    }\n"
+            "    @Test void b() throws Exception {\n"
+            "        Object c2 = Class.forName(\"com.acme.Bar\"); assertNotNull(c2);\n"
+            "    }\n"
+            "}\n"
+        )
+        self._write("src/test/java/TwoReflectTest.java", content)
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        reflection = [f for f in findings if "reflection-only" in f["what"].lower()]
+        self.assertEqual(reflection, [], "< threshold Class.forName calls must not fire")
+
+    def test_production_java_file_not_flagged(self):
+        """H5 must never fire on a non-test Java file, even with Class.forName usage."""
+        content = (
+            "package com.acme;\n"
+            "public class PluginLoader {\n"
+            "    public Object load(String cls) throws Exception {\n"
+            "        Object o = Class.forName(cls); assertNotNull(o);\n"
+            "        return Class.forName(cls).getDeclaredConstructor().newInstance();\n"
+            "    }\n"
+            "    public void run() {\n"
+            "        Object p = Class.forName(\"com.Plugin\"); assertNotNull(p);\n"
+            "        Object q = Class.forName(\"com.Plugin2\"); assertNotNull(q);\n"
+            "    }\n"
+            "}\n"
+        )
+        self._write("src/main/java/PluginLoader.java", content)
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        reflection = [f for f in findings if "reflection-only" in f["what"].lower()]
+        self.assertEqual(reflection, [],
+                         "H5 must not fire on production (non-test) files")
+
+
 if __name__ == "__main__":
     unittest.main()

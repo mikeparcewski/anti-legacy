@@ -25,6 +25,34 @@ _NUMERIC_RULE_RE = re.compile(
     r"charge|payment|credit|debit|limit|due|principal|interest|dollar|currency|"
     r"cent|comp-?3|packed[\s-]?decimal)\b|%", re.I)
 
+# H1: Rule-quality enforcement constants and patterns.
+# Maximum fraction of active business rules allowed to have confidence < 0.75.
+# Above this threshold, the extraction is considered unresolved and GATE_1
+# must not pass — low-confidence rules inflate coverage without providing
+# actual business rule content (the "confidence laundering" bypass).
+_LOW_CONFIDENCE_FRACTION_LIMIT = 0.20
+# Placeholder text patterns in rule statements — these are not business rules.
+_RULE_PLACEHOLDER_RE = re.compile(
+    r"review\s+required|confidence\s+below|placeholder|tbd\b|to\s+be\s+determined"
+    r"|not\s+yet\s+defined|lorem\s+ipsum",
+    re.IGNORECASE,
+)
+
+# H2: Domain density enforcement.
+# Minimum average requirements per domain. Below this, the domain model is
+# file-level fragmentation masquerading as business capability grouping.
+_MIN_REQ_PER_DOMAIN = 2.0
+# Pattern that identifies COBOL paragraph/step names used as domain names.
+_COBOL_PARA_DOMAIN_RE = re.compile(
+    r"^\d{4}[A-Za-z]|Capability$|[Pp]aragraph|Step\d*$|Open[A-Z]|Close[A-Z]",
+)
+
+# H3: Evidence-strength distribution gate.
+# If > this fraction of rule mappings carry only "weak" evidence, the round-
+# trip is not trustworthy. 100% weak is an unconditional FAIL — it means the
+# scanner only verified annotation presence, not behavioral implementation.
+_WEAK_EVIDENCE_FRACTION_LIMIT = 0.50
+
 # Default tool mappings per target stack
 DEFAULT_TOOLS = {
     "python": {
@@ -155,8 +183,8 @@ class ValidatorRunner:
             print(f"Error: Unknown gate '{gate_id}'", file=sys.stderr)
             return False
 
-    def _run_gate_1_design(self):
-        """GATE_1_DESIGN: Checks blueprint and requirements graph consistency."""
+    def _run_gate_1_design_collect_errors(self):
+        """Collect GATE_1_DESIGN errors without printing. Returns list[str]."""
         req_graph_path = os.path.join(self.workspace, ".anti-legacy", "requirements", "requirements_graph.json")
         blueprint_path = os.path.join(self.workspace, ".anti-legacy", "requirements", "blueprint.json")
         
@@ -197,6 +225,88 @@ class ValidatorRunner:
                                         f"money/rate/percent/count rule but no parity_hints — "
                                         f"numeric outputs MUST carry parity_hints (COMP-3 Universal Don't).")
                                     break
+
+                # H1: resolved-rate floor + placeholder text scan.
+                # risk-flagged nodes (confidence < 0.75) count toward coverage=1.0
+                # in coverage.py, so a 98%-placeholder graph can phantom-pass.
+                # Enforce a hard cap on the fraction of active rules below threshold.
+                total_active_rules = 0
+                low_conf_rules = 0
+                placeholder_rules_found = []
+                for domain, d_data in rg.get("domains", {}).items():
+                    for req_id, req in d_data.get("requirements", {}).items():
+                        if req.get("status") == "unresolvable":
+                            continue
+                        for br in req.get("business_rules") or []:
+                            if not isinstance(br, dict):
+                                continue
+                            total_active_rules += 1
+                            try:
+                                conf_f = float(br.get("confidence") or 1.0)
+                            except (TypeError, ValueError):
+                                conf_f = 1.0
+                            if conf_f < 0.75:
+                                low_conf_rules += 1
+                            stmt = br.get("statement", "") or ""
+                            if _RULE_PLACEHOLDER_RE.search(stmt):
+                                placeholder_rules_found.append((req_id, stmt[:80]))
+                if total_active_rules > 0:
+                    low_frac = low_conf_rules / total_active_rules
+                    if low_frac > _LOW_CONFIDENCE_FRACTION_LIMIT:
+                        errors.append(
+                            f"Design Compliance: {low_conf_rules}/{total_active_rules} "
+                            f"active business rules ({low_frac:.1%}) have confidence < 0.75 "
+                            f"(limit {_LOW_CONFIDENCE_FRACTION_LIMIT:.0%}). Extraction is "
+                            "unresolved — low-confidence rules inflate coverage without "
+                            "providing actual business content. Re-run anti-legacy:extraction "
+                            "or mark requirements unresolvable."
+                        )
+                for req_id, stmt in placeholder_rules_found[:5]:
+                    errors.append(
+                        f"Design Compliance: Requirement '{req_id}' has a placeholder "
+                        f"rule statement: '{stmt}' — rules must state actual business "
+                        "logic, not a review prompt."
+                    )
+                if len(placeholder_rules_found) > 5:
+                    errors.append(
+                        f"Design Compliance: ...and {len(placeholder_rules_found) - 5} "
+                        "more placeholder rule statements."
+                    )
+
+                # H2: domain density check.
+                # A model with one COBOL paragraph per domain is a structural echo
+                # of the legacy file layout, not a business capability model.
+                all_domains = rg.get("domains", {})
+                n_domains = len(all_domains)
+                n_reqs_total = sum(
+                    len(d.get("requirements", {})) for d in all_domains.values()
+                )
+                # Require at least 5 domains before flagging density — small
+                # single-domain graphs are legitimate and should not be penalised.
+                if n_domains >= 5:
+                    density = n_reqs_total / n_domains
+                    if density < _MIN_REQ_PER_DOMAIN:
+                        errors.append(
+                            f"Design Compliance: Domain fragmentation — {n_domains} domains "
+                            f"for {n_reqs_total} requirements (avg {density:.1f} req/domain, "
+                            f"minimum {_MIN_REQ_PER_DOMAIN:.0f}). The graph-translator "
+                            "produced file-level micro-domains instead of business capability "
+                            "groupings. Re-run anti-legacy:graph-translator with a higher "
+                            "domain clustering threshold."
+                        )
+                    cobol_single_domains = [
+                        d for d, d_data in all_domains.items()
+                        if len(d_data.get("requirements", {})) == 1
+                        and _COBOL_PARA_DOMAIN_RE.search(d)
+                    ]
+                    if len(cobol_single_domains) > 5:
+                        sample = ", ".join(cobol_single_domains[:3])
+                        errors.append(
+                            f"Design Compliance: {len(cobol_single_domains)} domains appear "
+                            f"to be COBOL paragraph/step names with a single requirement each "
+                            f"(e.g. {sample}). These are structural artifacts, not business "
+                            "capabilities — re-run anti-legacy:graph-translator."
+                        )
 
                 # Real schema gate: validate the whole graph against the enriched
                 # profile. This replaces the weak `if not req.get("business_rules")`
@@ -260,13 +370,16 @@ class ValidatorRunner:
         if not os.path.exists(nfr_path):
             errors.append("Design Compliance: Non-Functional Requirements document (nfrs.md) is missing.")
 
-        # Print result
+        return (len(errors) == 0), errors
+
+    def _run_gate_1_design(self):
+        """GATE_1_DESIGN: Checks blueprint and requirements graph consistency."""
+        ok, errors = self._run_gate_1_design_collect_errors()
         if errors:
             print("GATE_1_DESIGN: Compliance errors found:", file=sys.stderr)
             for err in errors:
                 print(f"  - {err}", file=sys.stderr)
             return False
-            
         print("GATE_1_DESIGN: Compliance checks passed. ✓")
         return True
 
@@ -504,7 +617,43 @@ class ValidatorRunner:
             )
             return False
 
-        print("GATE_3_BUILD: Round-trip rule-coverage check PASSED (0 FAIL, coverage>=1.0). ✓")
+        # H3: evidence-strength distribution gate.
+        # 100% weak evidence means the scanner only verified annotation presence
+        # (string match), not that any business logic actually executes — the
+        # canonical coverage-gaming pattern. >50% weak is also a hard block.
+        strength_per_rule = agg.get(
+            "evidence_strength_per_rule",
+            report.get("evidence_strength_per_rule", {}),
+        )
+        if strength_per_rule:
+            total_mapped = len(strength_per_rule)
+            weak_count = sum(
+                1 for s in strength_per_rule.values() if str(s).lower() == "weak"
+            )
+            if weak_count > 0:
+                weak_frac = weak_count / total_mapped
+                if weak_frac >= 1.0:
+                    print(
+                        f"GATE_3_BUILD: BLOCK - round-trip coverage is 100% weak evidence "
+                        f"({weak_count}/{total_mapped} rules). Annotation presence was "
+                        "verified but no behavioral implementation evidence was found. "
+                        "This indicates annotation stacking — rules are named but not "
+                        "executed. Enforce non-weak evidence or waive the gate with a "
+                        "documented rationale.",
+                        file=sys.stderr,
+                    )
+                    return False
+                elif weak_frac > _WEAK_EVIDENCE_FRACTION_LIMIT:
+                    print(
+                        f"GATE_3_BUILD: BLOCK - {weak_count}/{total_mapped} rule mappings "
+                        f"({weak_frac:.1%}) have weak evidence, exceeding the "
+                        f"{_WEAK_EVIDENCE_FRACTION_LIMIT:.0%} limit. Weak evidence means "
+                        "only annotation presence was checked, not behavioral implementation.",
+                        file=sys.stderr,
+                    )
+                    return False
+
+        print("GATE_3_BUILD: Round-trip rule-coverage check PASSED (0 FAIL, coverage>=1.0, evidence ok). ✓")
         return True
 
     def _run_gate_3b_semantic(self):
