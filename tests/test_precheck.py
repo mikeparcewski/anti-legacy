@@ -20,6 +20,9 @@ class PrecheckCLITest(unittest.TestCase):
         self.core_parent = os.path.abspath(os.path.join(
             os.path.dirname(__file__), "..", "skills", "anti-legacy-expert", "scripts"))
         self.env = dict(os.environ, PYTHONPATH=self.core_parent)
+        # ISS-22 review: don't inherit an ambient PRECHECK_STRICT — it would flip the lenient
+        # tests into strict mode. Strict tests set it (or --strict) explicitly off this base.
+        self.env.pop("PRECHECK_STRICT", None)
 
     def tearDown(self):
         shutil.rmtree(self.ws, ignore_errors=True)
