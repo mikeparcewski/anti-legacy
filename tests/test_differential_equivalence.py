@@ -173,18 +173,26 @@ class Gate3CDifferentialTest(unittest.TestCase):
         self.assertTrue(self._gate())
 
 
-class PostureConfidenceTest(unittest.TestCase):
-    """run_harness now grades golden trustworthiness; gate_posture turns that into BLOCK/WARN/PASS."""
+_ATTESTATION = {"method": "replay", "source": "PROD-LPAR1", "captured_at": "2026-01-01T00:00:00Z"}
 
-    def _corpus(self, provenance):
-        return [{"scenario_id": "s1", "req_id": "R", "golden_output": {"AMT": "5.00"},
-                 "provenance": provenance}]
+
+class PostureConfidenceTest(unittest.TestCase):
+    """run_harness now grades golden trustworthiness; gate_posture turns that into BLOCK/WARN/PASS.
+
+    captured-legacy reaches high confidence (BLOCK on FAIL) ONLY when attested (ISS-24)."""
+
+    def _corpus(self, provenance, attested=True):
+        e = {"scenario_id": "s1", "req_id": "R", "golden_output": {"AMT": "5.00"},
+             "provenance": provenance}
+        if provenance == "captured-legacy" and attested:
+            e["capture"] = dict(_ATTESTATION)
+        return [e]
 
     PARITY = {"R": [{"field": "AMT", "precision": 2}]}
 
     def test_confidence_is_weakest_provenance(self):
         corpus = [{"scenario_id": "s1", "req_id": "R", "golden_output": {"AMT": "5.00"},
-                   "provenance": "captured-legacy"},
+                   "provenance": "captured-legacy", "capture": dict(_ATTESTATION)},
                   {"scenario_id": "s2", "req_id": "R", "golden_output": {"AMT": "6.00"},
                    "provenance": "contract-expected"}]
         rep = de.run_harness(corpus, {"s1": {"AMT": "5.00"}, "s2": {"AMT": "6.00"}}, self.PARITY)
@@ -193,7 +201,7 @@ class PostureConfidenceTest(unittest.TestCase):
     def test_captured_fail_posture_is_block(self):
         rep = de.run_harness(self._corpus("captured-legacy"), {"s1": {"AMT": "5.99"}}, self.PARITY)
         self.assertEqual(rep["status"], de.FAIL)
-        self.assertEqual(de.gate_posture(rep), de.BLOCK)
+        self.assertEqual(de.gate_posture(rep), de.BLOCK)  # ATTESTED captured-legacy -> hard block
 
     def test_low_confidence_fail_posture_is_warn(self):
         rep = de.run_harness(self._corpus("contract-expected"), {"s1": {"AMT": "5.99"}}, self.PARITY)
@@ -210,6 +218,118 @@ class PostureConfidenceTest(unittest.TestCase):
         rep = de.run_harness([], {}, self.PARITY)
         self.assertEqual(de.gate_posture(rep), de.NOT_APPLICABLE)
         self.assertEqual(rep["golden_confidence"], "none")
+
+
+class CaptureAttestationTest(unittest.TestCase):
+    """ISS-24: a 'captured-legacy' label is machine-enforced, not trusted on its string. A valid
+    capture attestation {method, source, captured_at} is required to reach high confidence / BLOCK;
+    an unattested captured-legacy FAIL is downgraded to low confidence -> WARN, never BLOCK."""
+
+    PARITY = {"R": [{"field": "AMT", "precision": 2}]}
+
+    def _entry(self, capture, golden="5.00"):
+        e = {"scenario_id": "s1", "req_id": "R", "golden_output": {"AMT": golden},
+             "provenance": "captured-legacy"}
+        if capture is not None:
+            e["capture"] = capture
+        return e
+
+    # ---- _has_capture_attestation (the shape predicate) ----
+    def test_valid_attestation_accepted(self):
+        self.assertTrue(de._has_capture_attestation(self._entry(dict(_ATTESTATION))))
+
+    def test_missing_capture_block_rejected(self):
+        self.assertFalse(de._has_capture_attestation(self._entry(None)))
+
+    def test_capture_not_a_dict_rejected(self):
+        self.assertFalse(de._has_capture_attestation(self._entry("yes-I-promise")))
+
+    def test_missing_required_key_rejected(self):
+        self.assertFalse(de._has_capture_attestation(
+            self._entry({"method": "replay", "source": "PROD"})))  # no captured_at
+
+    def test_blank_required_value_rejected(self):
+        self.assertFalse(de._has_capture_attestation(
+            self._entry({"method": "replay", "source": "  ", "captured_at": "2026"})))
+
+    def test_effective_confidence_demotes_unattested_captured(self):
+        conf, unattested = de._effective_confidence_of(self._entry(None))
+        self.assertEqual(conf, "low")
+        self.assertTrue(unattested)
+
+    def test_effective_confidence_keeps_attested_captured_high(self):
+        conf, unattested = de._effective_confidence_of(self._entry(dict(_ATTESTATION)))
+        self.assertEqual(conf, "high")
+        self.assertFalse(unattested)
+
+    def test_effective_confidence_passthrough_other_tiers(self):
+        # non-captured tiers are unaffected (no attestation concept applies)
+        conf, unattested = de._effective_confidence_of(
+            {"scenario_id": "s", "provenance": "source-oracle"})
+        self.assertEqual(conf, "medium")
+        self.assertFalse(unattested)
+
+    # ---- end-to-end through run_harness + gate_posture ----
+    def test_unattested_captured_fail_warns_not_blocks(self):
+        rep = de.run_harness([self._entry(None)], {"s1": {"AMT": "5.99"}}, self.PARITY)
+        self.assertEqual(rep["status"], de.FAIL)
+        self.assertEqual(rep["golden_confidence"], "low")     # demoted from high
+        self.assertEqual(de.gate_posture(rep), de.WARN)       # NOT BLOCK — bare label can't block
+        self.assertTrue(any("without a capture attestation" in w.lower()
+                            or "unverified" in w.lower() for w in rep["warnings"]))
+
+    def test_attested_captured_fail_blocks(self):
+        rep = de.run_harness([self._entry(dict(_ATTESTATION))], {"s1": {"AMT": "5.99"}}, self.PARITY)
+        self.assertEqual(rep["status"], de.FAIL)
+        self.assertEqual(rep["golden_confidence"], "high")
+        self.assertEqual(de.gate_posture(rep), de.BLOCK)      # attested -> real divergence -> block
+
+    def test_unattested_captured_marks_scenario_attested_false(self):
+        rep = de.run_harness([self._entry(None)], {"s1": {"AMT": "5.00"}}, self.PARITY)
+        self.assertFalse(rep["scenarios"][0]["attested"])
+
+    def test_attested_captured_marks_scenario_attested_true(self):
+        rep = de.run_harness([self._entry(dict(_ATTESTATION))], {"s1": {"AMT": "5.00"}}, self.PARITY)
+        self.assertTrue(rep["scenarios"][0]["attested"])
+
+
+class Gate3CAttestationBranchTest(unittest.TestCase):
+    """The validator_discovery GATE_3C branch must follow gate_posture under attestation (ISS-24):
+    an unattested captured-legacy FAIL (downgraded to low) -> WARN -> gate returns success."""
+
+    def setUp(self):
+        from antilegacy_core.validator_discovery import ValidatorRunner  # noqa: E402
+        self.Runner = ValidatorRunner
+        self.dir = os.path.realpath(tempfile.mkdtemp(prefix="al-gate3c-att-"))
+        self.config = os.path.join(self.dir, "config.json")
+        self.manifest = os.path.join(self.dir, "manifest.json")
+        with open(self.config, "w", encoding="utf-8") as f:
+            json.dump({"target_stack": "python"}, f)
+        with open(self.manifest, "w", encoding="utf-8") as f:
+            json.dump({"version": "1.0.0", "project": {"name": "t"}, "artifacts": {}}, f)
+        self.ev = os.path.join(self.dir, ".anti-legacy", "evidence")
+        os.makedirs(self.ev, exist_ok=True)
+        self.PARITY = {"R": [{"field": "AMT", "precision": 2}]}
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _write_and_gate(self, corpus, actuals):
+        rep = de.run_harness(corpus, actuals, self.PARITY)
+        with open(os.path.join(self.ev, "differential-equivalence-report.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump(rep, f)
+        return self.Runner(self.dir, self.config, self.manifest).run_gate("GATE_3C_DIFFERENTIAL")
+
+    def test_unattested_captured_fail_does_not_block_gate(self):
+        corpus = [{"scenario_id": "s1", "req_id": "R", "golden_output": {"AMT": "5.00"},
+                   "provenance": "captured-legacy"}]  # NO capture block
+        self.assertTrue(self._write_and_gate(corpus, {"s1": {"AMT": "5.99"}}))  # WARN -> success
+
+    def test_attested_captured_fail_blocks_gate(self):
+        corpus = [{"scenario_id": "s1", "req_id": "R", "golden_output": {"AMT": "5.00"},
+                   "provenance": "captured-legacy", "capture": dict(_ATTESTATION)}]
+        self.assertFalse(self._write_and_gate(corpus, {"s1": {"AMT": "5.99"}}))  # BLOCK -> fail
 
 
 if __name__ == "__main__":

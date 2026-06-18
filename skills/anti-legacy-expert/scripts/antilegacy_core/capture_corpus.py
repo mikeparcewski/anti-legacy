@@ -17,6 +17,14 @@ tiers live in differential_equivalence.PROVENANCE_CONFIDENCE):
                                  This is what EVERY project has after test-strategy, so it is the
                                  default: a corpus is always assemblable, just low-confidence.
 
+Attested capture only (ISS-24): `--captured` is the ONLY path to the high-confidence tier that can
+hard-BLOCK the build, so the label is not trusted on a bare flag. A `--captured` entry is stamped
+`captured-legacy` ONLY when it carries a valid capture ATTESTATION — a `capture` object
+{method, source, captured_at} (see differential_equivalence._has_capture_attestation). A
+`--captured` entry WITHOUT a valid attestation is stamped `captured-legacy-unverified` (LOW
+confidence) and a warning is emitted; it does NOT reach high confidence and cannot force a BLOCK.
+This stops a careless/convenient relabel of an assumed golden from masquerading as captured legacy.
+
 Higher-confidence sources OVERLAY lower ones by `scenario_id`. The emitted corpus feeds
 differential_equivalence.run_harness directly; the provenance report grades the overall
 confidence and explains, in plain English, why the verdict should or should not be trusted.
@@ -89,23 +97,84 @@ def _tagged(entries, default_provenance):
         yield out
 
 
+def validate_attestation(entry):
+    """Validate a --captured entry's capture attestation (ISS-24). Returns (ok, reason).
+
+    Delegates the shape check to differential_equivalence._has_capture_attestation (the single
+    source of truth for what a valid `capture` block is: {method, source, captured_at}, all
+    present + non-empty). `reason` is empty on success, else a one-line explanation of what is
+    missing — surfaced as a warning so a relabel attempt is visible, never silent.
+    """
+    if de._has_capture_attestation(entry):
+        return True, ""
+    capture = (entry or {}).get("capture")
+    if not isinstance(capture, dict):
+        return False, "no `capture` attestation block"
+    missing = [k for k in de.CAPTURE_ATTESTATION_KEYS
+               if not (str(capture.get(k)).strip() if capture.get(k) is not None else "")]
+    return False, "capture attestation missing/blank: %s" % (", ".join(missing) or "?")
+
+
+def _stamp_captured(entries):
+    """Stamp --captured entries by attestation (ISS-24). Returns (stamped_entries, unverified_sids).
+
+    An entry with an explicit NON-`captured-legacy` provenance passes through untouched (no
+    attestation needed — it isn't claiming the high tier). An entry that is unlabeled OR
+    explicitly claims `captured-legacy` MUST pass attestation validation: a VALID capture
+    attestation -> `captured-legacy` (high); a missing/invalid one -> `captured-legacy-unverified`
+    (low). So a bare `"provenance": "captured-legacy"` label can NOT slip the high tier on its
+    word alone (ISS-24 review HIGH). The unverified scenario_ids are returned so the caller warns.
+    """
+    stamped, unverified = [], []
+    for e in entries or []:
+        sid = e.get("scenario_id")
+        if not sid:
+            continue
+        out = dict(e)
+        declared = out.get("provenance")
+        if declared and declared != "captured-legacy":
+            stamped.append(out)  # a non-high explicit provenance is kept as-is
+            continue
+        # unlabeled OR an explicit captured-legacy claim -> validate the attestation, never trust the label
+        ok, _reason = validate_attestation(out)
+        if ok:
+            out["provenance"] = "captured-legacy"
+        else:
+            out["provenance"] = "captured-legacy-unverified"
+            unverified.append(sid)
+        stamped.append(out)
+    return stamped, unverified
+
+
 def assemble(contracts_dir, oracle=None, captured=None):
     """Assemble the best-available golden corpus, higher-confidence sources overlaying lower
-    ones by scenario_id. Returns (corpus, provenance_report)."""
+    ones by scenario_id. Returns (corpus, provenance_report).
+
+    --captured entries are attestation-gated (ISS-24): only those carrying a valid capture
+    attestation are stamped `captured-legacy` (high); the rest are demoted to
+    `captured-legacy-unverified` (low) and named in the provenance report's warnings, so a bare
+    relabel cannot reach the blocking tier.
+    """
     by_sid = {}
     for e in from_contracts(contracts_dir):                 # lowest precedence
         by_sid[e["scenario_id"]] = e
     for e in _tagged(oracle, "source-oracle"):              # overrides contract-expected
         by_sid[e["scenario_id"]] = e
-    for e in _tagged(captured, "captured-legacy"):          # overrides everything
+    stamped_captured, unverified = _stamp_captured(captured)  # overrides everything
+    for e in stamped_captured:
         by_sid[e["scenario_id"]] = e
     corpus = list(by_sid.values())
-    return corpus, provenance_report(corpus)
+    return corpus, provenance_report(corpus, unverified_captured=unverified)
 
 
-def provenance_report(corpus):
+def provenance_report(corpus, unverified_captured=None):
     """Grade the assembled corpus: distribution, overall confidence (the WEAKEST tier present),
-    and a plain-English warning about how much to trust a verdict built on it."""
+    and a plain-English warning about how much to trust a verdict built on it.
+
+    `unverified_captured` (ISS-24) is the list of scenario_ids supplied via --captured that lacked
+    a valid capture attestation and were demoted to `captured-legacy-unverified`; when present, a
+    leading warning names them so a relabel attempt is never silent."""
+    unverified_captured = unverified_captured or []
     counts, weakest = {}, "high"
     for e in corpus:
         p = e.get("provenance") or "unspecified"
@@ -116,16 +185,24 @@ def provenance_report(corpus):
     if not corpus:
         weakest = "none"
     warnings = []
+    if unverified_captured:
+        warnings.append("%d --captured entry(ies) had NO valid capture attestation "
+                        "{method, source, captured_at} and were stamped "
+                        "'captured-legacy-unverified' (LOW confidence), NOT 'captured-legacy': %s. "
+                        "A bare captured-legacy label cannot reach the blocking tier — attach a "
+                        "capture manifest to each entry to make it count." % (
+                            len(unverified_captured), ", ".join(unverified_captured)))
     if not corpus:
         warnings.append("No golden corpus could be assembled: no contracts with expected_output, "
                         "no oracle, no captured legacy I/O. GATE_3C_DIFFERENTIAL will be NOT_APPLICABLE.")
     elif weakest != "high":
         dist = ", ".join("%d %s" % (n, p) for p, n in sorted(counts.items()))
         warnings.append("Golden confidence: %s. Provenance: %s. The legacy system was NOT captured "
-                        "for at least some scenarios, so the golden is ASSUMED/derived behavior, not "
-                        "the legacy's actual output — GATE_3C will WARN, not hard-block, on a "
-                        "divergence. To raise confidence: capture real legacy I/O ('captured-legacy') "
-                        "or supply a source-derived reference oracle ('source-oracle')." % (
+                        "(or not attested) for at least some scenarios, so the golden is "
+                        "ASSUMED/derived behavior, not the legacy's actual output — GATE_3C will "
+                        "WARN, not hard-block, on a divergence. To raise confidence: capture real "
+                        "legacy I/O with a capture attestation ('captured-legacy') or supply a "
+                        "source-derived reference oracle ('source-oracle')." % (
                             weakest.upper(), dist))
     return {"scenarios": len(corpus), "provenance": counts,
             "golden_confidence": weakest, "warnings": warnings}

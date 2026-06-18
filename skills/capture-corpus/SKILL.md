@@ -33,13 +33,41 @@ incorrect* (the target may be wrong, or the golden may be wrong), not a build-br
 
 | Provenance | Confidence | What it is | Where it comes from |
 |---|---|---|---|
-| `captured-legacy` | **high** | a real legacy run / recorded production I/O | instrument or replay the legacy system; recorded outputs |
+| `captured-legacy` | **high** | a real legacy run / recorded production I/O, **with a capture attestation** | instrument or replay the legacy system; recorded outputs + a capture manifest |
+| `captured-legacy-unverified` | **low** | a `--captured` entry that claimed captured-legacy but carried **no valid attestation** — auto-demoted (ISS-24) | a relabel attempt with no capture manifest |
 | `source-oracle` | **medium** | a reference oracle faithful to the legacy **source** arithmetic | hand-built from the source (see `demo/differential-equivalence/`) |
 | `contract-expected` | **low** | the test contracts' `scenarios[].expected_output` — the **assumed** behavior authored from the extracted rules | every project has this after `anti-legacy:test-strategy` |
 
-The gate's trust in a verdict is only as strong as the **weakest** golden it used. A FAIL against a
-`captured-legacy` golden **blocks** (real divergence → kick back to `build`); a FAIL against a
-`source-oracle` or `contract-expected` golden **warns** (it might be the golden that's wrong).
+The gate's trust in a verdict is only as strong as the **weakest** golden it used. A FAIL against an
+**attested** `captured-legacy` golden **blocks** (real divergence → kick back to `build`); a FAIL
+against a `source-oracle`, `contract-expected`, or `captured-legacy-unverified` golden **warns** (it
+might be the golden that's wrong).
+
+### Capture attestation — the high tier is machine-enforced, not self-declared (ISS-24)
+
+`captured-legacy` is the ONLY provenance that can hard-**BLOCK** the build, so the label alone is not
+trusted: it must be **proven** by a capture **attestation**. A `--captured` entry only earns the
+`captured-legacy` stamp when it carries a `capture` object recording *how* the I/O was captured —
+otherwise it is auto-demoted to `captured-legacy-unverified` (low) and a warning names it. The
+attestation shape (all three keys present + non-empty):
+
+```jsonc
+{
+  "scenario_id": "REQ-1::happy",
+  "req_id": "REQ-1",
+  "golden_output": { "GROSS": "1234.56" },
+  "capture": {
+    "method": "replay",                 // how captured — e.g. replay / production-tap / batch-rerun
+    "source": "PROD-LPAR1 / BILLING.cbl",// which legacy system / dataset the I/O came from
+    "captured_at": "2026-06-16T14:00:00Z"// ISO-8601 timestamp of the capture
+  }
+}
+```
+
+A bare `captured-legacy` label with no `capture` block (or a block missing/blanking any key) **cannot
+reach the blocking tier** — both `capture_corpus` (at stamp time) and `differential_equivalence`
+(at gate time) independently demote it. This is defense-in-depth against a careless or convenient
+relabel of an assumed golden.
 
 ## Cross-Platform Notes
 
@@ -61,7 +89,9 @@ warn. Overlay higher-confidence sources as you obtain them (they replace lower o
 
 ```bash
   --oracle  <source-oracle-corpus.json>     # medium: a reference oracle (see Step 3)
-  --captured <captured-legacy-corpus.json>  # high:   real recorded legacy I/O
+  --captured <captured-legacy-corpus.json>  # high:   real recorded legacy I/O — each entry MUST
+                                            #         carry a `capture` attestation (see above) or
+                                            #         it is demoted to captured-legacy-unverified (low)
 ```
 
 Exit `0` = corpus assembled, `1` = nothing available (no contracts/oracle/captured → the gate will
@@ -82,7 +112,10 @@ encode an assumption that is wrong. Never present a low-confidence PASS as "pari
   `COMPUTE INV-TAX` with its real COBOL semantics (no `ROUNDED` → truncation) so the gate catches a
   target that silently rounds.
 - **Captured legacy (high).** If you *can* run or replay the legacy system, record its inputs +
-  outputs and feed them via `--captured`. This is the only golden that makes GATE_3C a **hard** gate.
+  outputs and feed them via `--captured`, each entry carrying a `capture` attestation
+  (`{method, source, captured_at}`). This is the only golden that makes GATE_3C a **hard** gate — and
+  only when attested: an unattested `--captured` entry is demoted to `captured-legacy-unverified`
+  (low) and warns, so it never forces a false block.
 
 ## Step 4: Feed the gate
 
@@ -111,5 +144,8 @@ legacy) kicks back to `build`. See `anti-legacy:differential-equivalence` for th
 - **No contracts, no oracle, no captured I/O** → empty corpus, `golden_confidence: none`; GATE_3C
   stays `NOT_APPLICABLE`. Run `anti-legacy:test-strategy` first (it produces the contracts whose
   `expected_output` seeds a contract-expected corpus).
-- **Tempted to relabel a contract-expected corpus as captured-legacy to force a hard gate** → don't.
-  The whole point is honest provenance; a mislabeled golden turns a warning into a false block.
+- **Tempted to relabel a contract-expected corpus as captured-legacy to force a hard gate** → it
+  won't work (ISS-24). A `captured-legacy` entry with no `capture` attestation is auto-demoted to
+  `captured-legacy-unverified` (low) at both stamp time and gate time, so the relabel stays a
+  *warning*, never a block. The whole point is honest provenance — supply a real capture manifest
+  (`{method, source, captured_at}`) or accept the low-confidence WARN.
