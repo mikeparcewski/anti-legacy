@@ -108,7 +108,15 @@ of the doubt. Your job is to BREAK it: find every claim its source data does not
 ### Source data (ground truth — read these; the deliverable may not exceed them)
 {source_data list}     ← the requirements graph is the §2 traceability spine
 
-### What to hunt (report each as a finding)
+### What to hunt — the REQUIRED checklist (tick ALL SIX, every artifact)
+These six finding classes are a MANDATORY checklist, not a menu. For EVERY artifact you
+MUST consciously cover all six and record the per-class result in the `checklist` object of
+your return JSON (each class → `covered: true` + `result: "clean"` if nothing found, or
+`"finding"` if you raised ≥1 finding of that class). "Covered" means you actively looked for
+that class against the source data — not that you found something. A class is `"clean"` only
+after you looked and the data supports the deliverable on that axis; never leave a class
+`covered: false` (an unexamined class is a coverage gap, not a pass). The six classes:
+
 1. UNSUPPORTED / OPTIMISTIC CLAIM — a statement the source data does not back
    (e.g. "all rules resolved" when coverage-report shows risk_flagged > 0; a confidence
    asserted that no rule carries; a "low risk" with no basis).
@@ -146,6 +154,11 @@ of the doubt. Your job is to BREAK it: find every claim its source data does not
   specific source fact it contradicts (a req_id, RULE-id, coverage number, count).
 - `rationale` MUST reference specific evidence — a generic "looks good"/"reads well" is not
   a valid PASS rationale.
+- The `checklist` object MUST be present and carry ALL SIX classes, each `covered: true`. A
+  verdict that omits the `checklist`, omits any of the six classes, or leaves any class
+  `covered: false` is INVALID and is NOT a pass — it is an incomplete review (re-run it). A
+  PASS is only legitimate when every one of the six classes was covered and came back
+  `"clean"`; every class marked `"finding"` MUST have a matching entry in `findings[]`.
 
 ### Return this JSON, nothing else
 ```json
@@ -154,6 +167,14 @@ of the doubt. Your job is to BREAK it: find every claim its source data does not
   "deliverable": "{label}",
   "rendered_path": "{rendered_path}",
   "verdict": "PASS" | "REVISE" | "BLOCK",
+  "checklist": {
+    "unsupported-claim":    { "covered": true, "result": "clean" | "finding" },
+    "broken-traceability":  { "covered": true, "result": "clean" | "finding" },
+    "empty-section":        { "covered": true, "result": "clean" | "finding" },
+    "missing-parity":       { "covered": true, "result": "clean" | "finding" },
+    "hidden-gap":           { "covered": true, "result": "clean" | "finding" },
+    "graph-divergence":     { "covered": true, "result": "clean" | "finding" }
+  },
   "findings": [
     {
       "id": "DR-001",
@@ -167,7 +188,12 @@ of the doubt. Your job is to BREAK it: find every claim its source data does not
   "rationale": "specific, evidence-citing summary"
 }
 ```
-```
+
+The `checklist` is REQUIRED and carries all six classes (the keys above are exactly the
+`category` enum values). Each class's `result` MUST agree with `findings[]`: a class marked
+`"finding"` has ≥1 matching finding of that `category`; a class marked `"clean"` has none.
+A verdict missing the `checklist`, missing any of the six classes, or leaving any class
+`covered: false` is INVALID per the anti-rubber-stamp rules — re-run that critic.
 
 For CLIs without `@agent` dispatch, run the critics inline — adopt the critic persona for
 each deliverable in turn and produce the same JSON. Do not let inline mode collapse into a
@@ -218,9 +244,10 @@ the human's. `refine_loop` is likewise advisory — it computes the decision, it
 
 The review pass is "done" when **every `present` deliverable in the worklist has a critic
 verdict** and the aggregated package verdict + all CRITICAL/MAJOR findings are reported. A
-review that skipped a present deliverable, or returned a verdict that read no source file
-(anti-rubber-stamp), is NOT done — re-dispatch the missing/invalid critic. Surfacing a
-BLOCK is a *successful* review, not a failed one.
+review that skipped a present deliverable, returned a verdict that read no source file, or
+returned a verdict whose `checklist` is missing / incomplete / has any class `covered: false`
+(all anti-rubber-stamp violations), is NOT done — re-dispatch the missing/invalid critic.
+Surfacing a BLOCK is a *successful* review, not a failed one.
 
 ## Output
 

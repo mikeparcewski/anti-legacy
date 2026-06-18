@@ -20,6 +20,9 @@ class PrecheckCLITest(unittest.TestCase):
         self.core_parent = os.path.abspath(os.path.join(
             os.path.dirname(__file__), "..", "skills", "anti-legacy-expert", "scripts"))
         self.env = dict(os.environ, PYTHONPATH=self.core_parent)
+        # ISS-22 review: don't inherit an ambient PRECHECK_STRICT — it would flip the lenient
+        # tests into strict mode. Strict tests set it (or --strict) explicitly off this base.
+        self.env.pop("PRECHECK_STRICT", None)
 
     def tearDown(self):
         shutil.rmtree(self.ws, ignore_errors=True)
@@ -127,6 +130,53 @@ class PrecheckCLITest(unittest.TestCase):
         self.assertTrue(payload["ready"])
         self.assertEqual(payload["phase"], "deliverables")
         self.assertTrue(all("severity" in p and "category" in p for p in payload["probes"]))
+
+    # -- ISS-22: strict mode for unlisted phases -------------------------------
+    def _init_only(self):
+        """A bare initialized workspace (manifest present, no artifacts)."""
+        self._manifest("init", "--name", "t", "--target-stack", "java", "--target-path", "./t")
+
+    def test_unlisted_phase_lenient_warn_passes(self):
+        """Default (lenient): an unlisted phase warn-passes (exit 0, READY)."""
+        self._init_only()
+        r = self._precheck("some-brand-new-phase")  # no PHASE_READINESS profile
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("READY", r.stdout)
+        self.assertIn("no readiness profile", (r.stdout + r.stderr).lower())
+
+    def test_unlisted_phase_strict_flag_blocks(self):
+        """--strict turns the unlisted-phase warn-pass into a hard BLOCK (exit 1)."""
+        self._init_only()
+        r = self._precheck("some-brand-new-phase", "--strict")
+        self.assertEqual(r.returncode, 1, "an unlisted phase must BLOCK under --strict")
+        out = (r.stdout + r.stderr).lower()
+        self.assertIn("strict", out)
+        self.assertIn("no phase_readiness profile", out)
+
+    def test_unlisted_phase_strict_env_blocks(self):
+        """PRECHECK_STRICT env var enables strict mode without the flag."""
+        self._init_only()
+        env = dict(self.env, PRECHECK_STRICT="1")
+        r = subprocess.run([sys.executable, "-m", "antilegacy_core.precheck", "some-brand-new-phase"],
+                           cwd=self.ws, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(r.returncode, 1, "PRECHECK_STRICT=1 must BLOCK an unlisted phase")
+        self.assertIn("strict", (r.stdout + r.stderr).lower())
+
+    def test_unlisted_phase_strict_advisory_still_exits_zero(self):
+        """--strict --advisory: strict marks the BLOCK, but --advisory keeps exit 0
+        (advisory always reports rather than gating)."""
+        self._init_only()
+        r = self._precheck("some-brand-new-phase", "--strict", "--advisory")
+        self.assertEqual(r.returncode, 0, "advisory always exits 0 even under strict")
+        self.assertIn("NOT READY", r.stdout)
+
+    def test_listed_phase_unaffected_by_strict(self):
+        """Strict only changes the UNLISTED-phase case — a listed, ready phase
+        still passes under --strict (backward-compatible)."""
+        self._ready_workspace()
+        r = self._precheck("deliverables", "--strict")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("READY", r.stdout)
 
 
 if __name__ == "__main__":

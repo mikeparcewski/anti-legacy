@@ -166,7 +166,7 @@ class TestValidatorRunner(unittest.TestCase):
                                 "data_access": [],
                                 "dependencies": [],
                                 "business_rules": [
-                                    {"id": "RULE-001", "statement": "Compute billing amount from balance."}
+                                    {"id": "RULE-001", "statement": "Compute billing amount from balance.", "confidence": 0.9}
                                 ],
                                 "validations": [],
                                 "error_paths": [],

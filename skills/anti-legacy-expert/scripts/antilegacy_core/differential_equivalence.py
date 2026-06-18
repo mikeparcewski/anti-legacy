@@ -51,18 +51,65 @@ BLOCK, WARN = "BLOCK", "WARN"
 # confidence golden may mean the GOLDEN is wrong, not the target — so the gate WARNS instead of
 # hard-blocking. Only a FAIL against a HIGH-confidence (captured-legacy) golden blocks the build.
 PROVENANCE_CONFIDENCE = {
-    "captured-legacy":   "high",    # a real legacy run / recorded production I/O — the gold standard
-    "source-oracle":     "medium",  # reference oracle faithful to the legacy SOURCE arithmetic
-    "rule-derived":      "low",     # computed from the extracted business rules
-    "contract-expected": "low",     # the test contracts' assumed outputs (NOT captured legacy)
-    "unspecified":       "low",     # no provenance declared on the corpus entry
+    "captured-legacy":            "high",    # a real legacy run / recorded production I/O — the gold standard
+    "captured-legacy-unverified": "low",     # claimed captured-legacy but NO valid capture attestation (ISS-24)
+    "source-oracle":              "medium",  # reference oracle faithful to the legacy SOURCE arithmetic
+    "rule-derived":               "low",     # computed from the extracted business rules
+    "contract-expected":          "low",     # the test contracts' assumed outputs (NOT captured legacy)
+    "unspecified":                "low",     # no provenance declared on the corpus entry
 }
 _CONFIDENCE_RANK = {"high": 3, "medium": 2, "low": 1, "none": 0}
+
+# The high-confidence tier (captured-legacy) is the ONLY posture that hard-BLOCKS the build, so
+# the label alone is not trusted (ISS-24): a `captured-legacy` entry must carry a machine-checkable
+# capture ATTESTATION proving it came from a real legacy run, not a careless/convenient relabel of
+# an assumed golden. The attestation is a `capture` object recording HOW the I/O was captured:
+#   {"method": <how — e.g. "replay", "production-tap", "batch-rerun">,
+#    "source": <which legacy system / dataset the I/O came from>,
+#    "captured_at": <ISO-8601 timestamp of the capture>}
+# All three keys must be present and non-empty. An entry tagged `captured-legacy` WITHOUT a valid
+# attestation does NOT count as high confidence — run_harness downgrades its effective confidence to
+# "low" and warns, so golden_confidence only reaches "high" (and BLOCK only becomes reachable) when
+# the captured-legacy entries are attested.
+CAPTURE_ATTESTATION_KEYS = ("method", "source", "captured_at")
 
 
 def _confidence_of(provenance):
     """Confidence tier for a provenance label (unknown labels are treated as low)."""
     return PROVENANCE_CONFIDENCE.get(provenance or "unspecified", "low")
+
+
+def _has_capture_attestation(entry):
+    """True iff a corpus entry carries a VALID capture attestation (ISS-24).
+
+    A valid attestation is a `capture` object (dict) with all of CAPTURE_ATTESTATION_KEYS
+    (method, source, captured_at) present and non-empty (after str-strip). This is the machine
+    proof required before a `captured-legacy` label is trusted to high confidence — a bare label
+    with no `capture` block, or one missing/blanking any key, is NOT attested.
+    """
+    capture = (entry or {}).get("capture")
+    if not isinstance(capture, dict):
+        return False
+    for key in CAPTURE_ATTESTATION_KEYS:
+        val = capture.get(key)
+        if val is None or (isinstance(val, str) and not val.strip()):
+            return False
+    return True
+
+
+def _effective_confidence_of(entry):
+    """The confidence an entry ACTUALLY earns, after attestation enforcement (ISS-24).
+
+    Identical to _confidence_of(provenance) for every tier EXCEPT `captured-legacy`: a
+    captured-legacy entry only keeps its high confidence when _has_capture_attestation() holds;
+    an unattested captured-legacy entry is demoted to "low" (its self-declared label is not
+    machine-trusted). Returns (effective_confidence, unattested_captured_bool).
+    """
+    provenance = (entry or {}).get("provenance") or "unspecified"
+    declared = _confidence_of(provenance)
+    if provenance == "captured-legacy" and not _has_capture_attestation(entry):
+        return "low", True
+    return declared, False
 
 
 # --------------------------------------------------------------------------------------
@@ -147,10 +194,16 @@ def run_harness(corpus, actuals, parity_by_req):
 
     Vacuous-safe: an empty corpus -> NOT_APPLICABLE (the gate does not block). Any field
     violation when a corpus IS present -> FAIL. The report ALSO carries `golden_confidence`
-    (the WEAKEST provenance among the entries — a verdict is only as trustworthy as its weakest
-    golden), the `provenance` distribution, and plain-English `warnings`, so callers can grade
-    how much to trust the verdict. See gate_posture(): a FAIL against a non-captured golden is a
-    WARNING, not a build defect.
+    (the WEAKEST EFFECTIVE confidence among the entries — a verdict is only as trustworthy as its
+    weakest golden), the `provenance` distribution, and plain-English `warnings`, so callers can
+    grade how much to trust the verdict. See gate_posture(): a FAIL against a non-captured golden
+    is a WARNING, not a build defect.
+
+    Captured-legacy attestation (ISS-24): a `captured-legacy` entry only earns its HIGH confidence
+    when it carries a valid capture attestation (_has_capture_attestation). An UNATTESTED
+    captured-legacy entry is treated as effective confidence "low" (its self-declared label is not
+    machine-trusted) and a warning is added, so golden_confidence reaches "high" — and a FAIL can
+    BLOCK — only when the captured-legacy entries are attested.
     """
     if not corpus:
         return {"claim": "differential-equivalence", "status": NOT_APPLICABLE,
@@ -161,14 +214,16 @@ def run_harness(corpus, actuals, parity_by_req):
                              "(contracts' expected_output, a source oracle, or captured legacy I/O)."],
                 "note": "no golden corpus supplied — differential equivalence NOT EVALUATED."}
     scenarios, n_pass, n_fail, fields_checked, total_viol = [], 0, 0, 0, 0
-    prov_counts, weakest = {}, "high"
+    prov_counts, weakest, unattested_captured = {}, "high", 0
     for entry in corpus:
         sid = entry.get("scenario_id")
         req_id = entry.get("req_id")
         golden = entry.get("golden_output") or {}
         provenance = entry.get("provenance") or "unspecified"
         prov_counts[provenance] = prov_counts.get(provenance, 0) + 1
-        conf = _confidence_of(provenance)
+        conf, unattested = _effective_confidence_of(entry)
+        if unattested:
+            unattested_captured += 1
         if _CONFIDENCE_RANK[conf] < _CONFIDENCE_RANK[weakest]:
             weakest = conf
         rules = parity_by_req.get(req_id) or []
@@ -183,7 +238,8 @@ def run_harness(corpus, actuals, parity_by_req):
         total_viol += rec["violations"]
         (n_pass, n_fail) = (n_pass + 1, n_fail) if rec["status"] == PASS else (n_pass, n_fail + 1)
         scenarios.append({"scenario_id": sid, "req_id": req_id, "status": rec["status"],
-                          "provenance": provenance, "violations": rec["violations"],
+                          "provenance": provenance, "attested": not unattested if provenance == "captured-legacy" else None,
+                          "violations": rec["violations"],
                           "fields": rec["fields"]})
     status = PASS if n_fail == 0 else FAIL
     return {"claim": "differential-equivalence", "status": status,
@@ -192,24 +248,36 @@ def run_harness(corpus, actuals, parity_by_req):
             "scenarios": scenarios,
             "golden_confidence": weakest,
             "provenance": prov_counts,
-            "warnings": _confidence_warnings(weakest, prov_counts, status, n_fail),
+            "warnings": _confidence_warnings(weakest, prov_counts, status, n_fail, unattested_captured),
             "note": ("all scenarios within declared parity tolerances"
                      if status == PASS else
                      "%d scenario(s) diverge from the golden output — see violations" % n_fail)}
 
 
-def _confidence_warnings(golden_confidence, prov_counts, status, n_fail):
+def _confidence_warnings(golden_confidence, prov_counts, status, n_fail, unattested_captured=0):
     """Plain-English 'the data could be incorrect, and here is why' warnings, keyed to what
-    golden was available. Empty when the golden is captured-legacy (the verdict stands alone)."""
+    golden was available. Empty when the golden is ATTESTED captured-legacy (the verdict stands
+    alone). When entries are tagged captured-legacy but carry no valid capture attestation
+    (ISS-24), a leading warning flags them as treated-unverified (this is also what dragged the
+    effective confidence below high)."""
+    warns = []
+    if unattested_captured:
+        warns.append("%d entry(ies) tagged 'captured-legacy' WITHOUT a capture attestation — "
+                     "treated as UNVERIFIED (effective confidence: low), NOT trusted to high "
+                     "confidence. A captured-legacy golden must carry a `capture` block "
+                     "{method, source, captured_at} to be machine-trusted; a bare label cannot "
+                     "reach BLOCK. Re-assemble via anti-legacy:capture-corpus with a capture "
+                     "manifest, or treat this divergence as a WARNING (not a build defect)." % (
+                         unattested_captured,))
     if golden_confidence == "high":
-        return []
+        return warns
     dist = ", ".join("%d %s" % (n, p) for p, n in sorted(prov_counts.items()))
-    raise_it = ("To raise confidence: capture real legacy I/O (provenance 'captured-legacy'), or "
-                "supply a source-derived reference oracle (provenance 'source-oracle'; see "
-                "demo/differential-equivalence/).")
-    warns = ["Golden confidence: %s. Provenance: %s. The legacy system was NOT captured for this "
-             "run, so the golden is ASSUMED/derived behavior, not the legacy's actual output. %s"
-             % (golden_confidence.upper(), dist, raise_it)]
+    raise_it = ("To raise confidence: capture real legacy I/O (provenance 'captured-legacy' WITH a "
+                "capture attestation), or supply a source-derived reference oracle (provenance "
+                "'source-oracle'; see demo/differential-equivalence/).")
+    warns.append("Golden confidence: %s. Provenance: %s. The legacy system was NOT captured "
+                 "(or not attested) for this run, so the golden is ASSUMED/derived behavior, not "
+                 "the legacy's actual output. %s" % (golden_confidence.upper(), dist, raise_it))
     if status == FAIL:
         warns.append("This is a WARNING, not a hard build failure: a %d-scenario divergence against "
                      "a %s-confidence golden may mean the TARGET is wrong OR that the golden itself "
@@ -223,13 +291,18 @@ def _confidence_warnings(golden_confidence, prov_counts, status, n_fail):
 
 def gate_posture(report):
     """The gate's overall stance, graded by golden trustworthiness (ISS-7 follow-up). It is NOT a
-    hard gate unless the golden is captured legacy:
+    hard gate unless the golden is ATTESTED captured legacy:
       NOT_APPLICABLE -> no corpus (non-blocking).
       PASS           -> parity holds (a caveat warning rides along when confidence < high).
       WARN           -> parity FAILed but against a < high-confidence golden — surface loudly,
                         do NOT hard-block (the golden may itself be wrong; data could be incorrect).
-      BLOCK          -> parity FAILed against a HIGH-confidence (captured-legacy) golden — a real
-                        divergence; block and kick back to build.
+      BLOCK          -> parity FAILed against a HIGH-confidence golden — a real divergence; block
+                        and kick back to build.
+
+    BLOCK keys off `golden_confidence == "high"`, which run_harness only emits when every
+    captured-legacy entry carries a valid capture attestation (ISS-24): an UNATTESTED
+    captured-legacy FAIL is downgraded to effective confidence "low" upstream, so it surfaces here
+    as WARN, never BLOCK. A bare self-declared `captured-legacy` label cannot force a hard block.
     """
     status = report.get("status")
     if status == NOT_APPLICABLE:

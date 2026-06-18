@@ -2,13 +2,13 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "requirements-graph.enriched.schema.json",
   "title": "anti-legacy Requirements Graph (enriched profile)",
-  "description": "Tightened overlay of requirements-graph.schema.json, run by GATE_1_DESIGN AFTER enrich_requirements.py. Every requirement MUST carry business_rules (>=1), validations, and error_paths as object-form, ID'd items (RULE-/VAL-/ERR- + three-to-six-digit zero-padded, unique within a requirement). This is the post-migration profile: rule/validation/errorPath items are OBJECT-ONLY here (the transitional string form accepted by the base profile is NOT accepted). The $defs are copied from the base file so the validator does not depend on cross-file $ref resolution; they are intentionally the object branch of the base file's anyOf shapes. IDs wider than 3 digits are emitted automatically when community sub-partitioning still yields >999 members (dense modern codebases such as Apache Kafka).",
+  "description": "Tightened overlay of requirements-graph.schema.json, run by GATE_1_DESIGN AFTER enrich_requirements.py. Every requirement MUST carry business_rules (>=1), validations, and error_paths as object-form, ID'd items (RULE-/VAL-/ERR- + three-to-six-digit zero-padded, unique within a requirement). This is the post-migration profile: rule/validation/errorPath items are OBJECT-ONLY here (the transitional string form accepted by the base profile is NOT accepted). Every business_rules item MUST additionally carry a numeric `confidence` in [0,1] (ISS-11): a confidence-less or non-numeric-confidence rule is a HARD GATE_1 validation failure here, not merely a risk-log warning — confidence stays OPTIONAL on validation/errorPath items. The $defs are copied from the base file so the validator does not depend on cross-file $ref resolution; they are intentionally the object branch of the base file's anyOf shapes (the base profile keeps confidence optional + the transitional string branch). IDs wider than 3 digits are emitted automatically when community sub-partitioning still yields >999 members (dense modern codebases such as Apache Kafka).",
   "type": "object",
   "required": ["domains"],
   "$defs": {
     "rule": {
       "type": "object",
-      "required": ["id", "statement"],
+      "required": ["id", "statement", "confidence"],
       "additionalProperties": false,
       "properties": {
         "id": { "type": "string", "pattern": "^RULE-[0-9]{3,6}$" },

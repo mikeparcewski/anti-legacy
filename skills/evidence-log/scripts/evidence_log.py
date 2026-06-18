@@ -55,6 +55,20 @@ ARTIFACT_ID = "deliverable-evidence-log"
 PRODUCED_BY = "anti-legacy:evidence-log"
 OUTPUT_RELNAME = "evidence-log.md"
 
+# ISS-25: the differential-equivalence (GATE_3C) report carries a golden_confidence the gate
+# status alone hides. The evidence log reads it from disk and rides it ALONGSIDE the GATE_3C
+# opinion so a low/medium-confidence PASS never renders as a clean proven-parity row.
+GATE_3C_ID = "GATE_3C_DIFFERENTIAL"
+DIFFERENTIAL_REPORT_RELPATH = os.path.join("evidence", "differential-equivalence-report.json")
+# Plain-English gloss per confidence tier (the anti-oversell caveat). The inherent epistemic limit:
+# a contract-expected/source-oracle PASS can never PROVE real-legacy parity — so we never hide it.
+_CONFIDENCE_GLOSS = {
+    "high": "captured legacy I/O (attested) — the gold standard",
+    "medium": "source oracle — faithful to the legacy SOURCE, but not the live system",
+    "low": "assumed behavior, not captured legacy",
+    "none": "no golden corpus — parity NOT evaluated",
+}
+
 # Canonical phase order. The manifest module owns it; the contract calls it
 # PHASE_SEQUENCE. Prefer that name if it ever exists, else the current symbol
 # (PHASE_ENUM) — never hardcode the order here.
@@ -314,8 +328,41 @@ def _render_phase_table(manifest, audit, skill_map):
     return md
 
 
+def _read_differential_confidence():
+    """Read GATE_3C's golden_confidence from the differential-equivalence report (ISS-25).
+
+    Returns (golden_confidence, gate_posture, warnings) read from
+    .anti-legacy/evidence/differential-equivalence-report.json, or (None, None, []) when the
+    report is absent/unreadable. The report path is resolved against the workspace the SAME way
+    every other artifact is (D.load_json -> _abs against the CWD/workspace), so the receipt-style
+    'computed, not claimed' contract holds: this reads the on-disk report, it does not invent a
+    confidence. Surfacing it keeps a low/medium PASS from reading as proven parity (issue #25).
+    """
+    report = D.load_json(DIFFERENTIAL_REPORT_RELPATH, default={})
+    if not isinstance(report, dict) or not report:
+        return None, None, []
+    return (report.get("golden_confidence"),
+            report.get("gate_posture"),
+            report.get("warnings") or [])
+
+
+def _gate3c_confidence_suffix(golden_confidence):
+    """A compact ' (golden confidence: <tier> — <gloss>)' suffix for the GATE_3C opinion cell,
+    or '' when there is no report. ISS-25: ride the confidence alongside the bare status."""
+    if not golden_confidence:
+        return ""
+    gloss = _CONFIDENCE_GLOSS.get(golden_confidence, "see report")
+    return " (golden confidence: {0} — {1})".format(golden_confidence, gloss)
+
+
 def _render_gate_ledger(manifest, audit):
-    """The eight-gate ledger: opinion, evaluator, rationale, evidence, when."""
+    """The eight-gate ledger: opinion, evaluator, rationale, evidence, when.
+
+    ISS-25: the GATE_3C_DIFFERENTIAL row's opinion is annotated with the golden_confidence read
+    from the differential-equivalence report on disk, e.g. 'passed (golden confidence: low —
+    assumed behavior, not captured legacy)', so a low/medium-confidence PASS is never rendered as
+    a clean proven-parity verdict downstream.
+    """
     md = ["## Gate ledger", "",
           "All eight gates. **human** gates require a person; **auto** gates clear "
           "on evidence. Opinion + evaluator + rationale + evidence ids come from "
@@ -337,10 +384,17 @@ def _render_gate_ledger(manifest, audit):
         if gid and (gid not in signed or ts >= signed[gid]):
             signed[gid] = ts
 
+    # ISS-25: read GATE_3C's golden_confidence once so the row can carry the caveat.
+    g3c_conf, _g3c_posture, g3c_warnings = _read_differential_confidence()
+
     rows = []
     for gid in all_gates:
         g = gates.get(gid) or {}
         opinion = (g.get("status") or "pending")
+        # ISS-25: annotate GATE_3C's opinion with the golden_confidence from the report on disk,
+        # so a low/medium PASS never reads as proven parity.
+        if gid == GATE_3C_ID:
+            opinion = opinion + _gate3c_confidence_suffix(g3c_conf)
         kind = "human" if gid in HUMAN_GATES else "auto"
         evaluator = g.get("evaluator") or "—"
         rationale = g.get("rationale") or "—"
@@ -353,6 +407,26 @@ def _render_gate_ledger(manifest, audit):
         ["Gate", "Type", "Opinion", "Evaluator", "Rationale", "Evidence", "When"],
         rows))
     md.append("")
+
+    # ISS-25: spell out the GATE_3C golden-confidence caveat in prose too (the table cell is
+    # terse). The inherent epistemic limit: a contract-expected / source-oracle PASS can never
+    # PROVE real-legacy parity — we surface the caveat rather than pretend it away.
+    if g3c_conf:
+        md.append("### GATE_3C_DIFFERENTIAL — golden confidence")
+        md.append("")
+        md.append("Differential-equivalence parity was graded at **golden confidence: {0}** "
+                  "({1}), read from `{2}`. A PASS at `low`/`medium` confidence proves the target "
+                  "agrees with ASSUMED/derived behavior, **not** that it matches the real legacy — "
+                  "that limit is epistemic and cannot be removed, only surfaced. Only an attested "
+                  "`captured-legacy` (high-confidence) golden makes a parity verdict authoritative "
+                  "(and a FAIL a hard block).".format(
+                      g3c_conf, _CONFIDENCE_GLOSS.get(g3c_conf, "see report"),
+                      DIFFERENTIAL_REPORT_RELPATH.replace(os.sep, "/")))
+        md.append("")
+        for w in g3c_warnings:
+            md.append("- ⚠ {0}".format(D.md_escape(w)))
+        if g3c_warnings:
+            md.append("")
 
     # Kick-backs: surface every gate-kicked-back event — these are the honest
     # record of work that was rewound.
