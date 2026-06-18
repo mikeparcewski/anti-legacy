@@ -311,5 +311,140 @@ class TestCompletenessScanner(unittest.TestCase):
         self.assertTrue(os.path.exists(out))
 
 
+class TestFix3CommentWordSeverity(unittest.TestCase):
+    """Fix 3: stub/mock/placeholder in a comment line must be MEDIUM, never HIGH."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="fix3-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, content):
+        path = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def test_dummy_in_comment_is_medium_not_high_production_file(self):
+        self._write("src/main/java/Repo.java",
+                    "public class Repo {\n"
+                    "    // initialized with dummy seed data for local dev\n"
+                    "    private List<Item> items = loadSeedData();\n"
+                    "    public List<Item> findAll() {\n"
+                    "        return items.stream().filter(Item::isActive).collect(Collectors.toList());\n"
+                    "    }\n"
+                    "}\n")
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        comment_findings = [f for f in findings if "dummy" in f["what"].lower()]
+        self.assertTrue(comment_findings, "expected a 'dummy' finding")
+        for f in comment_findings:
+            self.assertEqual(f["severity"], "MEDIUM",
+                             f"'dummy' in comment should be MEDIUM, got {f['severity']}: {f['what']}")
+
+    def test_mock_in_comment_is_medium_for_production_file(self):
+        self._write("src/service/OrderService.java",
+                    "public class OrderService {\n"
+                    "    // mock data removed after integration — real adapter wired\n"
+                    "    private final OrderRepo repo;\n"
+                    "    public Order findById(long id) { return repo.findById(id); }\n"
+                    "}\n")
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        comment_findings = [f for f in findings if "mock" in f["what"].lower()]
+        for f in comment_findings:
+            self.assertNotEqual(f["severity"], "HIGH",
+                                f"'mock' in comment must not be HIGH: {f['what']}")
+
+    def test_production_file_with_only_dummy_comment_passes_gate(self):
+        """A fully-implemented file with one 'dummy' comment must not be GATE_5 FAIL."""
+        self._write("src/main/java/HealthCheck.java",
+                    "public class HealthCheck {\n"
+                    "    // dummy endpoint response shape — matches spec v2\n"
+                    "    public HealthStatus check() {\n"
+                    "        return new HealthStatus(db.ping(), cache.ping());\n"
+                    "    }\n"
+                    "}\n")
+        report = build_report(self.tmp)
+        high_findings = [f for f in report["findings"] if f["severity"] == "HIGH"]
+        self.assertEqual(high_findings, [],
+                         f"Production file with 'dummy' comment caused HIGH finding: {high_findings}")
+
+    def test_todo_marker_in_code_still_high(self):
+        """Regression: TODO/FIXME markers in code body must still be HIGH."""
+        self._write("src/Processor.java",
+                    "public class Processor {\n"
+                    "    // TODO: finish implementing\n"
+                    "    public void process() {}\n"
+                    "}\n")
+        findings, _ = scan_tree(self.tmp, dimensions=["CODE"])
+        todo_findings = [f for f in findings if "todo" in f["what"].lower()]
+        self.assertTrue(todo_findings, "TODO in code must still fire")
+        self.assertTrue(any(f["severity"] == "HIGH" for f in todo_findings),
+                        "TODO marker must still be HIGH")
+
+
+class TestFix4ConfigDevProfile(unittest.TestCase):
+    """Fix 4: dev-profile configs and in-memory DB configs must not cause HIGH findings."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="fix4-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, content):
+        path = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def test_application_local_yml_empty_password_not_high(self):
+        self._write("src/main/resources/application-local.yml",
+                    "spring:\n"
+                    "  datasource:\n"
+                    "    password: \n"
+                    "    url: jdbc:h2:mem:testdb\n")
+        findings, _ = scan_tree(self.tmp, dimensions=["CONFIG"])
+        password_findings = [f for f in findings if "password" in f["what"].lower()]
+        for f in password_findings:
+            self.assertNotEqual(f["severity"], "HIGH",
+                                f"empty password in -local. config must not be HIGH: {f['what']}")
+
+    def test_application_dev_yml_empty_password_not_high(self):
+        self._write("src/main/resources/application-dev.yml",
+                    "spring:\n"
+                    "  datasource:\n"
+                    "    password: \n")
+        findings, _ = scan_tree(self.tmp, dimensions=["CONFIG"])
+        password_findings = [f for f in findings if "password" in f["what"].lower()]
+        for f in password_findings:
+            self.assertNotEqual(f["severity"], "HIGH",
+                                f"empty password in -dev. config must not be HIGH: {f['what']}")
+
+    def test_h2_mem_config_empty_password_downgraded(self):
+        """application.properties with h2:mem URL + empty password must not be HIGH."""
+        self._write("src/main/resources/application.properties",
+                    "spring.datasource.url=jdbc:h2:mem:testdb\n"
+                    "spring.datasource.username=sa\n"
+                    "spring.datasource.password=\n")
+        findings, _ = scan_tree(self.tmp, dimensions=["CONFIG"])
+        password_findings = [f for f in findings
+                             if "password" in f["what"].lower() and f["severity"] == "HIGH"]
+        self.assertEqual(password_findings, [],
+                         "H2 in-memory config with empty password must not fire HIGH")
+
+    def test_production_config_empty_password_still_high(self):
+        """Real prod .env with no h2:mem and empty PASSWORD must remain HIGH."""
+        self._write(".env",
+                    "DATABASE_URL=jdbc:postgresql://prod-db:5432/myapp\n"
+                    "DATABASE_PASSWORD=\n")
+        findings, _ = scan_tree(self.tmp, dimensions=["CONFIG"])
+        self.assertTrue(
+            any("DATABASE_PASSWORD" in f["what"] and f["severity"] == "HIGH"
+                for f in findings),
+            "empty DATABASE_PASSWORD in production .env must still be HIGH",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

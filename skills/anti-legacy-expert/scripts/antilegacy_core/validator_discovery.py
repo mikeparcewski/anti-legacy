@@ -114,10 +114,18 @@ class ValidatorDiscovery:
 
 
 class ValidatorRunner:
-    def __init__(self, workspace, config_path=".anti-legacy/config.json", manifest_path=".anti-legacy/manifest.json"):
+    def __init__(self, workspace, config_path=".anti-legacy/config.json",
+                 manifest_path=".anti-legacy/manifest.json", evidence_root=None):
         self.workspace = workspace
         self.config_path = config_path
         self.manifest_path = manifest_path
+        # evidence_root: where gate evidence files are written and read from.
+        # Defaults to workspace so single-workspace projects are unchanged.
+        # Override to the pipeline root when the target tree lives under a
+        # sub-directory (e.g. target/modernized-app) but the canonical evidence
+        # store lives in the root .anti-legacy/evidence/ — prevents the
+        # dual-context sync problem where evidence accumulates in two places.
+        self.evidence_root = evidence_root or workspace
         self.discovery = ValidatorDiscovery(workspace, config_path)
         self.stack = self.discovery.stack
 
@@ -365,7 +373,7 @@ class ValidatorRunner:
         """ISS-14: post-build functional-acceptance gate.
 
         Reads .anti-legacy/evidence/functional-test-report.json under the
-        workspace. When the report is ABSENT this returns True (vacuous) — the
+        evidence_root. When the report is ABSENT this returns True (vacuous) — the
         hard requirement that the report exist lives in target-review's done-gate,
         not here, so existing build flows that have not yet run the functional
         runner are not retroactively broken. When the report is PRESENT it must
@@ -373,7 +381,7 @@ class ValidatorRunner:
         stack) BLOCKS the gate. There is no path where a non-PASS report clears.
         """
         report_path = os.path.join(
-            self.workspace, ".anti-legacy", "evidence",
+            self.evidence_root, ".anti-legacy", "evidence",
             "functional-test-report.json"
         )
         if not os.path.exists(report_path):
@@ -411,12 +419,12 @@ class ValidatorRunner:
         """M1: deterministic round-trip rule-coverage gate.
 
         Reads .anti-legacy/evidence/functional_comparison_report.json under the
-        workspace and BLOCKS (returns False) when the report is missing, any
+        evidence_root and BLOCKS (returns False) when the report is missing, any
         requirement FAILs, or aggregate rule coverage < 1.0. Returns True only
         when the report is present, has 0 FAILs, and rule_coverage >= 1.0.
         """
         report_path = os.path.join(
-            self.workspace, ".anti-legacy", "evidence",
+            self.evidence_root, ".anti-legacy", "evidence",
             "functional_comparison_report.json"
         )
         if not os.path.exists(report_path):
@@ -588,7 +596,7 @@ class ValidatorRunner:
 
     def _run_gate_4_uat(self):
         """GATE_4_UAT: Checks UAT verdicts and coverage."""
-        uat_evidence_dir = os.path.join(self.workspace, ".anti-legacy", "evidence", "uat")
+        uat_evidence_dir = os.path.join(self.evidence_root, ".anti-legacy", "evidence", "uat")
         manifest_path = self.manifest_path
         
         errors = []
@@ -988,7 +996,7 @@ class ValidatorRunner:
             }
 
     def _record_evidence(self, artifact_id, result):
-        evidence_path = os.path.join(self.workspace, ".anti-legacy", "evidence", f"{artifact_id}.json")
+        evidence_path = os.path.join(self.evidence_root, ".anti-legacy", "evidence", f"{artifact_id}.json")
         os.makedirs(os.path.dirname(evidence_path), exist_ok=True)
         
         evidence = {
@@ -1010,6 +1018,94 @@ class ValidatorRunner:
         print(f"Recorded evidence to: {evidence_path} (Status: {result['status']})")
 
 
+def uat_preflight(config_path, manifest_path):
+    """Print a pre-flight independence summary before UAT dispatch.
+
+    Reads the architect identity from config.json and every GATE_1_DESIGN
+    signer from audit.jsonl, then prints a clear warning box so the operator
+    knows WHICH identities are reserved before dispatching any UAT agents.
+    Returns a list of reserved identity strings (lowercased, stripped).
+    """
+    reserved = []
+
+    # Load config
+    cfg = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                cfg = json.load(f)
+        except Exception:
+            pass
+    architect = (cfg.get("roles", {}) or {}).get("architect", "")
+
+    # Load manifest gate evaluators
+    gate1_manifest = ""
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path) as f:
+                m = json.load(f)
+            gate1_manifest = (m.get("gates", {}).get("GATE_1_DESIGN", {}) or {}).get("evaluator", "")
+        except Exception:
+            pass
+
+    # Load audit.jsonl
+    audit_gate1_signers = []
+    audit_path = os.path.join(os.path.dirname(manifest_path), "audit.jsonl")
+    if os.path.exists(audit_path):
+        try:
+            with open(audit_path) as af:
+                for line in af:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    if rec.get("event") != "anti-legacy:gate-signed-off":
+                        continue
+                    details = rec.get("details", {}) or {}
+                    if details.get("gate_id") == "GATE_1_DESIGN":
+                        ev = (details.get("evaluator") or "").strip()
+                        if ev and ev not in audit_gate1_signers:
+                            audit_gate1_signers.append(ev)
+        except Exception:
+            pass
+
+    print("\n" + "=" * 60)
+    print("  UAT Pre-flight: Reviewer Independence Check")
+    print("=" * 60)
+    if architect:
+        print(f"  config roles.architect     : {architect}")
+        reserved.append(architect.strip().lower())
+    else:
+        print("  config roles.architect     : (not set)")
+    if gate1_manifest:
+        print(f"  GATE_1_DESIGN evaluator    : {gate1_manifest}")
+        n = gate1_manifest.strip().lower()
+        if n not in reserved:
+            reserved.append(n)
+    else:
+        print("  GATE_1_DESIGN evaluator    : (not yet recorded)")
+    for signer in audit_gate1_signers:
+        n = signer.strip().lower()
+        if n not in reserved:
+            reserved.append(n)
+            print(f"  GATE_1 audit signer        : {signer}")
+
+    print()
+    if reserved:
+        print("  RESERVED identities (MUST NOT be used as UAT evaluator):")
+        for r in reserved:
+            print(f"    ✗  {r}")
+    else:
+        print("  No reserved identities detected (roles/gates not yet set).")
+    print()
+    print("  Pass a distinct identity via --evaluator when signing GATE_4_UAT.")
+    print("=" * 60 + "\n")
+    return reserved
+
+
 def main():
     parser = argparse.ArgumentParser(description="Deterministic validator tool discovery and run orchestrator.")
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
@@ -1026,23 +1122,42 @@ def main():
     run_p.add_argument("--gate", required=True, help="Gate to run validators for (GATE_1_DESIGN, GATE_2_PLAN, GATE_3_BUILD, GATE_3B_SEMANTIC, GATE_4_UAT)")
     run_p.add_argument("--workspace", default=".", help="Path to target codebase")
     run_p.add_argument("--config", default=".anti-legacy/config.json", help="Path to config.json")
+    run_p.add_argument(
+        "--evidence-root", default=None,
+        help=(
+            "Root directory whose .anti-legacy/evidence/ tree is used for reading "
+            "and writing gate evidence files. Defaults to --workspace. Override to "
+            "the pipeline root when the target tree lives in a sub-directory "
+            "(e.g. target/modernized-app) but evidence must stay in the root "
+            ".anti-legacy/evidence/ — prevents dual-context sync drift."
+        ),
+    )
+
+    # subcommand: uat-preflight (Fix 5)
+    pf_p = subparsers.add_parser(
+        "uat-preflight",
+        help="Print reviewer-independence pre-flight before UAT dispatch",
+    )
+    pf_p.add_argument("--config", default=".anti-legacy/config.json", help="Path to config.json")
+    pf_p.add_argument("--manifest", default=".anti-legacy/manifest.json", help="Path to manifest.json")
 
     args = parser.parse_args()
-    
+
     if args.command == "discover":
         discovery = ValidatorDiscovery(args.workspace, args.config)
         if args.stack:
             discovery.stack = args.stack.lower()
-            
+
         results = discovery.discover_tools()
         success = discovery.print_discovery_report(results)
-        
+
         if not success and args.fail_on_missing:
             sys.exit(1)
         sys.exit(0)
 
     elif args.command == "run":
-        runner = ValidatorRunner(args.workspace, args.config)
+        runner = ValidatorRunner(args.workspace, args.config,
+                                 evidence_root=args.evidence_root)
         success = runner.run_gate(args.gate)
         if not success:
             print(f"Gatekeeper check: FAILED validation for {args.gate}.", file=sys.stderr)
@@ -1050,7 +1165,11 @@ def main():
         else:
             print(f"Gatekeeper check: PASSED validation for {args.gate}.")
             sys.exit(0)
-            
+
+    elif args.command == "uat-preflight":
+        uat_preflight(args.config, args.manifest)
+        sys.exit(0)
+
     else:
         parser.print_help()
         sys.exit(1)

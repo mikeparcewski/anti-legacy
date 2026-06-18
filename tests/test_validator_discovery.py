@@ -659,5 +659,121 @@ class TestValidatorRunner(unittest.TestCase):
         success = runner.run_gate("GATE_0_DISCOVERY")
         self.assertTrue(success)
 
+class TestFix1EvidenceRoot(unittest.TestCase):
+    """Fix 1: --evidence-root lets evidence live at the pipeline root, not the target dir."""
+
+    def setUp(self):
+        self.pipeline_root = tempfile.mkdtemp(prefix="pipeline-root-")
+        self.target_dir = tempfile.mkdtemp(prefix="target-app-")
+        self.config_path = os.path.join(self.pipeline_root, ".anti-legacy", "config.json")
+        self.manifest_path = os.path.join(self.pipeline_root, ".anti-legacy", "manifest.json")
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        with open(self.config_path, "w") as f:
+            json.dump({"target_stack": "python"}, f)
+
+    def tearDown(self):
+        shutil.rmtree(self.pipeline_root, ignore_errors=True)
+        shutil.rmtree(self.target_dir, ignore_errors=True)
+
+    def test_evidence_root_defaults_to_workspace(self):
+        runner = ValidatorRunner(self.target_dir, self.config_path)
+        self.assertEqual(runner.evidence_root, self.target_dir)
+
+    def test_evidence_root_override_used_for_record_evidence(self):
+        runner = ValidatorRunner(
+            self.target_dir, self.config_path,
+            evidence_root=self.pipeline_root,
+        )
+        result = {"status": "PASS", "command": "test", "exit_code": 0,
+                  "stdout": "", "stderr": ""}
+        runner._record_evidence("test-artifact", result)
+        expected = os.path.join(
+            self.pipeline_root, ".anti-legacy", "evidence", "test-artifact.json"
+        )
+        self.assertTrue(os.path.exists(expected),
+                        f"Evidence should be at pipeline root, not target dir: {expected}")
+        in_target = os.path.join(
+            self.target_dir, ".anti-legacy", "evidence", "test-artifact.json"
+        )
+        self.assertFalse(os.path.exists(in_target),
+                         "Evidence must NOT appear in the target dir when evidence_root overrides")
+
+    def test_gate4_uat_reads_from_evidence_root(self):
+        """GATE_4_UAT should read evidence/uat/ from evidence_root, not workspace."""
+        # Plant a PASS verdict in the pipeline root, nothing in target dir.
+        uat_dir = os.path.join(self.pipeline_root, ".anti-legacy", "evidence", "uat")
+        os.makedirs(uat_dir, exist_ok=True)
+        with open(os.path.join(uat_dir, "BILLING-001-verdict.json"), "w") as f:
+            json.dump({
+                "req_id": "BILLING-001", "domain": "billing",
+                "verdict": "PASS", "findings": [],
+                "overall_rationale": "All billing rules verified.",
+            }, f)
+        with open(self.manifest_path, "w") as f:
+            json.dump({"gates": {}, "project": {}}, f)
+
+        runner = ValidatorRunner(
+            self.target_dir, self.config_path, self.manifest_path,
+            evidence_root=self.pipeline_root,
+        )
+        self.assertTrue(runner.run_gate("GATE_4_UAT"),
+                        "GATE_4_UAT should PASS when evidence is in evidence_root")
+
+
+class TestFix5UatPreflight(unittest.TestCase):
+    """Fix 5: uat_preflight prints reserved identities before UAT dispatch."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="preflight-")
+        self.config_path = os.path.join(self.tmp, "config.json")
+        self.manifest_path = os.path.join(self.tmp, "manifest.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_preflight_returns_architect_as_reserved(self):
+        from antilegacy_core.validator_discovery import uat_preflight
+        with open(self.config_path, "w") as f:
+            json.dump({"roles": {"architect": "Michael Parcewski"}}, f)
+        with open(self.manifest_path, "w") as f:
+            json.dump({"gates": {}}, f)
+        reserved = uat_preflight(self.config_path, self.manifest_path)
+        self.assertIn("michael parcewski", reserved)
+
+    def test_preflight_includes_gate1_manifest_signer(self):
+        from antilegacy_core.validator_discovery import uat_preflight
+        with open(self.config_path, "w") as f:
+            json.dump({}, f)
+        with open(self.manifest_path, "w") as f:
+            json.dump({"gates": {"GATE_1_DESIGN": {"evaluator": "Alice Smith"}}}, f)
+        reserved = uat_preflight(self.config_path, self.manifest_path)
+        self.assertIn("alice smith", reserved)
+
+    def test_preflight_includes_audit_signer(self):
+        from antilegacy_core.validator_discovery import uat_preflight
+        audit_path = os.path.join(self.tmp, "audit.jsonl")
+        with open(audit_path, "w") as f:
+            f.write(json.dumps({
+                "event": "anti-legacy:gate-signed-off",
+                "details": {"gate_id": "GATE_1_DESIGN", "evaluator": "Bob Jones"},
+            }) + "\n")
+        with open(self.config_path, "w") as f:
+            json.dump({}, f)
+        with open(self.manifest_path, "w") as f:
+            json.dump({"gates": {}}, f)
+        reserved = uat_preflight(self.config_path, self.manifest_path)
+        self.assertIn("bob jones", reserved)
+
+    def test_preflight_empty_when_no_roles_set(self):
+        from antilegacy_core.validator_discovery import uat_preflight
+        with open(self.config_path, "w") as f:
+            json.dump({}, f)
+        with open(self.manifest_path, "w") as f:
+            json.dump({"gates": {}}, f)
+        reserved = uat_preflight(self.config_path, self.manifest_path)
+        self.assertEqual(reserved, [],
+                         "No roles set → no reserved identities, preflight is vacuous")
+
+
 if __name__ == "__main__":
     unittest.main()
