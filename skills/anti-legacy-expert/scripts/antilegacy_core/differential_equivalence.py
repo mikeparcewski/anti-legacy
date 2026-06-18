@@ -43,6 +43,27 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 PASS, FAIL, NOT_APPLICABLE = "PASS", "FAIL", "NOT_APPLICABLE"
 
+# Gate posture — the OVERALL stance the gate takes, graded by how trustworthy the golden is.
+BLOCK, WARN = "BLOCK", "WARN"
+
+# Golden-provenance tiers, strongest -> weakest, and the confidence each implies. A parity
+# verdict is only as trustworthy as the golden it compared against: a FAIL against a low-
+# confidence golden may mean the GOLDEN is wrong, not the target — so the gate WARNS instead of
+# hard-blocking. Only a FAIL against a HIGH-confidence (captured-legacy) golden blocks the build.
+PROVENANCE_CONFIDENCE = {
+    "captured-legacy":   "high",    # a real legacy run / recorded production I/O — the gold standard
+    "source-oracle":     "medium",  # reference oracle faithful to the legacy SOURCE arithmetic
+    "rule-derived":      "low",     # computed from the extracted business rules
+    "contract-expected": "low",     # the test contracts' assumed outputs (NOT captured legacy)
+    "unspecified":       "low",     # no provenance declared on the corpus entry
+}
+_CONFIDENCE_RANK = {"high": 3, "medium": 2, "low": 1, "none": 0}
+
+
+def _confidence_of(provenance):
+    """Confidence tier for a provenance label (unknown labels are treated as low)."""
+    return PROVENANCE_CONFIDENCE.get(provenance or "unspecified", "low")
+
 
 # --------------------------------------------------------------------------------------
 # Comparator — the precision-aware heart (COMP-3 safe)
@@ -125,19 +146,31 @@ def run_harness(corpus, actuals, parity_by_req):
     parity_by_req : {req_id: [parity_rule, ...]}  (loaded from the test contracts)
 
     Vacuous-safe: an empty corpus -> NOT_APPLICABLE (the gate does not block). Any field
-    violation when a corpus IS present -> FAIL.
+    violation when a corpus IS present -> FAIL. The report ALSO carries `golden_confidence`
+    (the WEAKEST provenance among the entries — a verdict is only as trustworthy as its weakest
+    golden), the `provenance` distribution, and plain-English `warnings`, so callers can grade
+    how much to trust the verdict. See gate_posture(): a FAIL against a non-captured golden is a
+    WARNING, not a build defect.
     """
     if not corpus:
         return {"claim": "differential-equivalence", "status": NOT_APPLICABLE,
                 "aggregate": {"scenarios": 0, "pass": 0, "fail": 0, "fields_checked": 0, "violations": 0},
-                "scenarios": [],
-                "note": "no golden corpus supplied — differential equivalence NOT EVALUATED. "
-                        "Supply a captured legacy I/O corpus to make this gate non-vacuous."}
+                "scenarios": [], "golden_confidence": "none", "provenance": {},
+                "warnings": ["no golden corpus supplied — differential equivalence NOT EVALUATED. "
+                             "Run anti-legacy:capture-corpus to assemble one from what is available "
+                             "(contracts' expected_output, a source oracle, or captured legacy I/O)."],
+                "note": "no golden corpus supplied — differential equivalence NOT EVALUATED."}
     scenarios, n_pass, n_fail, fields_checked, total_viol = [], 0, 0, 0, 0
+    prov_counts, weakest = {}, "high"
     for entry in corpus:
         sid = entry.get("scenario_id")
         req_id = entry.get("req_id")
         golden = entry.get("golden_output") or {}
+        provenance = entry.get("provenance") or "unspecified"
+        prov_counts[provenance] = prov_counts.get(provenance, 0) + 1
+        conf = _confidence_of(provenance)
+        if _CONFIDENCE_RANK[conf] < _CONFIDENCE_RANK[weakest]:
+            weakest = conf
         rules = parity_by_req.get(req_id) or []
         actual = (actuals or {}).get(sid)
         if actual is None:
@@ -150,15 +183,60 @@ def run_harness(corpus, actuals, parity_by_req):
         total_viol += rec["violations"]
         (n_pass, n_fail) = (n_pass + 1, n_fail) if rec["status"] == PASS else (n_pass, n_fail + 1)
         scenarios.append({"scenario_id": sid, "req_id": req_id, "status": rec["status"],
-                          "violations": rec["violations"], "fields": rec["fields"]})
+                          "provenance": provenance, "violations": rec["violations"],
+                          "fields": rec["fields"]})
     status = PASS if n_fail == 0 else FAIL
     return {"claim": "differential-equivalence", "status": status,
             "aggregate": {"scenarios": len(corpus), "pass": n_pass, "fail": n_fail,
                           "fields_checked": fields_checked, "violations": total_viol},
             "scenarios": scenarios,
+            "golden_confidence": weakest,
+            "provenance": prov_counts,
+            "warnings": _confidence_warnings(weakest, prov_counts, status, n_fail),
             "note": ("all scenarios within declared parity tolerances"
                      if status == PASS else
-                     "%d scenario(s) diverge from legacy golden output — see violations" % n_fail)}
+                     "%d scenario(s) diverge from the golden output — see violations" % n_fail)}
+
+
+def _confidence_warnings(golden_confidence, prov_counts, status, n_fail):
+    """Plain-English 'the data could be incorrect, and here is why' warnings, keyed to what
+    golden was available. Empty when the golden is captured-legacy (the verdict stands alone)."""
+    if golden_confidence == "high":
+        return []
+    dist = ", ".join("%d %s" % (n, p) for p, n in sorted(prov_counts.items()))
+    raise_it = ("To raise confidence: capture real legacy I/O (provenance 'captured-legacy'), or "
+                "supply a source-derived reference oracle (provenance 'source-oracle'; see "
+                "demo/differential-equivalence/).")
+    warns = ["Golden confidence: %s. Provenance: %s. The legacy system was NOT captured for this "
+             "run, so the golden is ASSUMED/derived behavior, not the legacy's actual output. %s"
+             % (golden_confidence.upper(), dist, raise_it)]
+    if status == FAIL:
+        warns.append("This is a WARNING, not a hard build failure: a %d-scenario divergence against "
+                     "a %s-confidence golden may mean the TARGET is wrong OR that the golden itself "
+                     "is wrong. Investigate both — do not auto-fail the build on it." % (
+                         n_fail, golden_confidence))
+    else:
+        warns.append("PASS proves the target agrees with the ASSUMED behavior, not that it matches "
+                     "the real legacy — raise the golden confidence to make this PASS meaningful.")
+    return warns
+
+
+def gate_posture(report):
+    """The gate's overall stance, graded by golden trustworthiness (ISS-7 follow-up). It is NOT a
+    hard gate unless the golden is captured legacy:
+      NOT_APPLICABLE -> no corpus (non-blocking).
+      PASS           -> parity holds (a caveat warning rides along when confidence < high).
+      WARN           -> parity FAILed but against a < high-confidence golden — surface loudly,
+                        do NOT hard-block (the golden may itself be wrong; data could be incorrect).
+      BLOCK          -> parity FAILed against a HIGH-confidence (captured-legacy) golden — a real
+                        divergence; block and kick back to build.
+    """
+    status = report.get("status")
+    if status == NOT_APPLICABLE:
+        return NOT_APPLICABLE
+    if status == PASS:
+        return PASS
+    return BLOCK if report.get("golden_confidence") == "high" else WARN
 
 
 # --------------------------------------------------------------------------------------

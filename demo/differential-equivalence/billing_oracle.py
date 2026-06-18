@@ -72,10 +72,16 @@ def target_output(state, amount, mode):
 
 
 def golden_corpus():
-    """[{scenario_id, req_id, inputs, golden_output}, ...] — the differential-equivalence corpus."""
+    """[{scenario_id, req_id, inputs, golden_output, provenance}, ...] — the corpus.
+
+    Tagged `source-oracle` (medium confidence): faithful to BILLING.cbl's arithmetic, but a
+    re-implementation, NOT a captured mainframe run — so GATE_3C WARNS rather than hard-blocks
+    on a divergence. Only a captured-legacy corpus would make a FAIL a hard block.
+    """
     return [{"scenario_id": sid, "req_id": REQ_ID,
              "inputs": {"CUST-STATE": state, "INV-AMOUNT": amount},
-             "golden_output": legacy_output(state, amount)}
+             "golden_output": legacy_output(state, amount),
+             "provenance": "source-oracle"}
             for sid, state, amount in SCENARIOS]
 
 

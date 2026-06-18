@@ -152,13 +152,64 @@ class Gate3CDifferentialTest(unittest.TestCase):
                       "aggregate": {"scenarios": 2, "pass": 2, "fail": 0, "violations": 0}})
         self.assertTrue(self._gate())
 
-    def test_fail_report_blocks(self):
-        self._report({"status": "FAIL",
+    def _fail_report(self, golden_confidence):
+        self._report({"status": "FAIL", "golden_confidence": golden_confidence,
+                      "warnings": ["w"],
                       "aggregate": {"scenarios": 1, "pass": 0, "fail": 1, "violations": 1},
                       "scenarios": [{"scenario_id": "s1", "req_id": "R1", "status": "FAIL",
                                      "fields": [{"field": "AMT", "parity": False,
                                                  "detail": "PARITY LOSS at 2 dp"}]}]})
+
+    def test_fail_against_captured_legacy_blocks(self):
+        self._fail_report("high")          # captured-legacy golden -> a real divergence
         self.assertFalse(self._gate())
+
+    def test_fail_against_low_confidence_warns_not_blocks(self):
+        self._fail_report("low")           # contract-expected/oracle golden -> WARN, not block
+        self.assertTrue(self._gate())
+
+    def test_fail_against_source_oracle_warns_not_blocks(self):
+        self._fail_report("medium")        # source-oracle is medium, still not captured -> WARN
+        self.assertTrue(self._gate())
+
+
+class PostureConfidenceTest(unittest.TestCase):
+    """run_harness now grades golden trustworthiness; gate_posture turns that into BLOCK/WARN/PASS."""
+
+    def _corpus(self, provenance):
+        return [{"scenario_id": "s1", "req_id": "R", "golden_output": {"AMT": "5.00"},
+                 "provenance": provenance}]
+
+    PARITY = {"R": [{"field": "AMT", "precision": 2}]}
+
+    def test_confidence_is_weakest_provenance(self):
+        corpus = [{"scenario_id": "s1", "req_id": "R", "golden_output": {"AMT": "5.00"},
+                   "provenance": "captured-legacy"},
+                  {"scenario_id": "s2", "req_id": "R", "golden_output": {"AMT": "6.00"},
+                   "provenance": "contract-expected"}]
+        rep = de.run_harness(corpus, {"s1": {"AMT": "5.00"}, "s2": {"AMT": "6.00"}}, self.PARITY)
+        self.assertEqual(rep["golden_confidence"], "low")  # weakest of {high, low}
+
+    def test_captured_fail_posture_is_block(self):
+        rep = de.run_harness(self._corpus("captured-legacy"), {"s1": {"AMT": "5.99"}}, self.PARITY)
+        self.assertEqual(rep["status"], de.FAIL)
+        self.assertEqual(de.gate_posture(rep), de.BLOCK)
+
+    def test_low_confidence_fail_posture_is_warn(self):
+        rep = de.run_harness(self._corpus("contract-expected"), {"s1": {"AMT": "5.99"}}, self.PARITY)
+        self.assertEqual(rep["status"], de.FAIL)
+        self.assertEqual(de.gate_posture(rep), de.WARN)
+        self.assertTrue(rep["warnings"])  # explains the data could be incorrect
+
+    def test_pass_posture_is_pass_with_caveat_when_low(self):
+        rep = de.run_harness(self._corpus("contract-expected"), {"s1": {"AMT": "5.00"}}, self.PARITY)
+        self.assertEqual(de.gate_posture(rep), de.PASS)
+        self.assertTrue(rep["warnings"])  # PASS-with-caveat: agrees with assumed, not captured
+
+    def test_not_applicable_posture(self):
+        rep = de.run_harness([], {}, self.PARITY)
+        self.assertEqual(de.gate_posture(rep), de.NOT_APPLICABLE)
+        self.assertEqual(rep["golden_confidence"], "none")
 
 
 if __name__ == "__main__":

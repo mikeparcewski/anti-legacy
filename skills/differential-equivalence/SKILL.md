@@ -54,12 +54,15 @@ standard golden a migration team builds when the mainframe isn't runnable — no
   (`{field, precision, source_type}`; `precision` is an int = decimal places, or `"exact"`) define
   the tolerance per field. The harness loads these automatically.
 
-## Step 1: Assemble the golden corpus + capture target outputs
+## Step 1: Assemble the golden corpus (via capture-corpus) + capture target outputs
 
-Build `corpus.json` from captured legacy output (or a golden-file set), and `actuals.json` by
-running the built target over the same input vectors. Both are workspace files (e.g. under
-`.anti-legacy/evidence/`). If you cannot obtain a legacy golden, STOP and say so — the gate will be
-NOT_APPLICABLE; do not invent expected values (that would only re-assert the LLM's own guess, §6).
+Use **`anti-legacy:capture-corpus`** to assemble `corpus.json` from whatever is available — the
+test contracts' `expected_output` (always present; `contract-expected`, low confidence), a source
+oracle (`source-oracle`, medium), or real captured legacy I/O (`captured-legacy`, high). It tags
+each entry's `provenance` and grades the overall confidence, so you never have to "invent expected
+values": a low-confidence corpus is honest and still useful (the gate WARNS instead of blocking).
+Produce `actuals.json` by running the built target over the same input vectors. Both live under
+`.anti-legacy/evidence/`. If nothing is assemblable, the gate is honestly NOT_APPLICABLE.
 
 ## Step 2: Run the differential harness
 
@@ -73,41 +76,54 @@ python3 .anti-legacy/run.py differential_equivalence run \
 
 The comparator coerces numeric strings to `Decimal` and compares to the declared decimal places
 (`ROUND_HALF_UP`); a non-numeric value where numeric parity is declared, or a field missing from
-the actual output, is a violation. Exit `0` = PASS or NOT_APPLICABLE, `1` = FAIL (parity
-violations), `2` = bad inputs. The report carries `status`, an `aggregate` block
-(`scenarios/pass/fail/fields_checked/violations`), and per-scenario per-field detail.
+the actual output, is a violation. Exit `0` = PASS or NOT_APPLICABLE, `1` = FAIL, `2` = bad inputs.
+The report carries `status`, an `aggregate` block, per-scenario per-field detail, **and**
+`golden_confidence` + `provenance` + `warnings` + a `gate_posture` of PASS / WARN / BLOCK /
+NOT_APPLICABLE (the trust-graded stance — see below).
 
-## Step 3: Register the evidence + record the gate
+## Step 3: Register the evidence + record the gate (graded by posture)
+
+The gate is **provenance-graded** (ISS-7 follow-up): a parity FAIL against a low/medium-confidence
+golden is a **WARNING**, not a hard failure — only a FAIL against a **captured-legacy** golden
+blocks. Read `gate_posture` from the report:
 
 ```bash
 python3 .anti-legacy/run.py manifest register differential-equivalence-report \
   --path evidence/differential-equivalence-report.json --format json \
   --produced-by anti-legacy:differential-equivalence --status final
 
-# PASS or NOT_APPLICABLE -> record passed (evidence required):
+# gate_posture PASS / WARN / NOT_APPLICABLE  -> record passed (evidence required). On WARN you
+# MUST surface the report's `warnings` (the data could be incorrect; say why + at what confidence):
 python3 .anti-legacy/run.py manifest gate GATE_3C_DIFFERENTIAL --opinion passed \
   --evaluator anti-legacy:differential-equivalence \
-  --rationale "executed parity within declared tolerances (or no golden corpus → NOT_APPLICABLE)" \
+  --rationale "posture=<PASS|WARN|NOT_APPLICABLE>; golden_confidence=<...>; <warnings summarized>" \
   --evidence differential-equivalence-report
 ```
 
-You can also let the deterministic runner evaluate the report:
-`python3 .anti-legacy/run.py validator_discovery run --gate GATE_3C_DIFFERENTIAL` returns non-zero
-on FAIL, zero on PASS/NOT_APPLICABLE (vacuous-safe).
+Or let the deterministic runner decide: `validator_discovery run --gate GATE_3C_DIFFERENTIAL`
+returns zero on PASS / WARN / NOT_APPLICABLE (printing the warnings) and non-zero **only** on a
+captured-legacy BLOCK (vacuous-safe + warn-graded).
 
-## Step 4: On FAIL — kick back to build
+## Step 4: On a captured-legacy BLOCK — kick back to build
+
+Only when `gate_posture == BLOCK` (a parity FAIL against a **captured-legacy** golden — a real,
+trusted divergence):
 
 ```bash
 python3 .anti-legacy/run.py manifest gate GATE_3C_DIFFERENTIAL --opinion failed \
   --evaluator anti-legacy:differential-equivalence \
-  --rationale "N scenario(s) diverge from legacy golden — see report violations"
+  --rationale "N scenario(s) diverge from CAPTURED legacy golden — see report violations"
 ```
 
-A `failed` opinion rewinds `phase.current` to `build` (`anti-legacy:swarm`) and names it for
-re-run (generalized kick-back, exit 3). Fix the divergence in the target at its source, rebuild,
-re-capture `actuals.json`, and re-run this skill — do **not** loosen `parity_rules` to make a money
-mismatch pass (that is the COMP-3 Universal Don't). Report every diverging field with its
-`scenario_id`, `req_id`, and the golden-vs-actual values (§6).
+A `failed` opinion rewinds `phase.current` to `build` (`anti-legacy:swarm`), exit 3. Fix the
+divergence in the target at its source, rebuild, re-capture `actuals.json`, and re-run — do **not**
+loosen `parity_rules` to make a money mismatch pass (the COMP-3 Universal Don't).
+
+On a **WARN** (FAIL against a low/medium-confidence golden) do NOT record `failed` and do NOT block:
+report the divergences as a warning, name the golden confidence, and recommend raising it (capture
+real legacy I/O, or supply a source oracle) before treating the divergence as a build defect — the
+golden itself may be wrong. Report every diverging field with its `scenario_id`, `req_id`, and the
+golden-vs-actual values (§6).
 
 ## Done-gate
 
