@@ -1,6 +1,6 @@
 {
   "name": "anti-legacy",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Semi-autonomous legacy modernization pipeline. Extracts business rules from legacy code into a language-agnostic requirements graph, runs gated human review, then orchestrates a swarm of subagents to build the target system.",
   "author": {
     "name": "Antigravity"
