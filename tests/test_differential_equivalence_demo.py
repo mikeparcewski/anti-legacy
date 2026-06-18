@@ -38,6 +38,7 @@ class DiffEquivDemoTest(unittest.TestCase):
         rep = de.run_harness(self.corpus, oracle.target_actuals("faithful"), self.parity)
         self.assertEqual(rep["status"], de.PASS)
         self.assertEqual(rep["aggregate"]["fail"], 0)
+        self.assertEqual(de.gate_posture(rep), de.PASS)
 
     def test_rounding_target_fails_on_comp3_divergence(self):
         rep = de.run_harness(self.corpus, oracle.target_actuals("rounding"), self.parity)
@@ -46,6 +47,9 @@ class DiffEquivDemoTest(unittest.TestCase):
         # exactly the two between-cent scenarios diverge (truncate != round)
         self.assertEqual(failed, {"INV-CA-TRUNC", "INV-TX-TRUNC"})
         self.assertGreaterEqual(rep["aggregate"]["violations"], 4)  # INV-TAX + INV-TOTAL on each
+        # The demo golden is a source-oracle (medium), not captured legacy -> WARN, not BLOCK.
+        self.assertEqual(rep["golden_confidence"], "medium")
+        self.assertEqual(de.gate_posture(rep), de.WARN)
 
     def test_gate_is_non_vacuous_with_a_corpus(self):
         rep = de.run_harness(self.corpus, oracle.target_actuals("faithful"), self.parity)

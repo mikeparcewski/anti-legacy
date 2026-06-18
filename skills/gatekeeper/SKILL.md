@@ -40,7 +40,7 @@ and Windows Git Bash. Evidence verification uses `manifest.py check`.
 | `GATE_2_PLAN` | After planner | task-plan, blueprint-json | PM + Tech Lead |
 | `GATE_3_BUILD` | After target-review | build-integrity (PASS) + functional-comparison-report (0 FAIL, coverage>=1.0) | Automated — no human required |
 | `GATE_3B_SEMANTIC`| After semantic-validation| semantic-validation-report | Lead Architect + Tech Lead |
-| `GATE_3C_DIFFERENTIAL` | After build, when a golden corpus exists | differential-equivalence-report (status PASS or NOT_APPLICABLE) | Automated — no human required (vacuous-safe; NOT in the advance-precondition map) |
+| `GATE_3C_DIFFERENTIAL` | After build, when a golden corpus exists | differential-equivalence-report (`gate_posture` PASS / WARN / NOT_APPLICABLE all clear; only BLOCK fails) | Automated — **provenance-graded warning**, not a hard gate unless the golden is captured-legacy. A parity FAIL against a low/medium-confidence golden WARNS (the golden may itself be wrong); only a FAIL against a captured-legacy golden BLOCKS → kick back to `build`. Vacuous-safe; NOT in the advance-precondition map |
 | `GATE_4_UAT` | After uat-crew | uat-summary, uat-verdicts (both registered by uat-crew) | UAT Lead (independent of architect — HARD FAIL if same) |
 | `GATE_5_COMPLETENESS` | After document, at `final-review` | completeness-report (status PASS) | Automated — no human required |
 
