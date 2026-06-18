@@ -44,6 +44,39 @@ def _requirements_by_id(graph):
     return idx
 
 
+def _ordered_component_ids(components, blueprint):
+    """req_ids of `components`, sorted into the blueprint's declared build order.
+
+    The blueprint's authoritative ordering signal is its **top-level** `build_order`
+    list of req_ids (see `anti-legacy:blueprint` SKILL.md and `document.py`, which read
+    it the same way). A component is keyed by its index in that list; ties / req_ids
+    absent from `build_order` fall back to a per-component integer `build_order` field
+    if present, else preserve insertion order. The sort is stable, so components that
+    share an ordering key keep their declaration sequence.
+
+    This is what makes the emitted build steps dependency-sorted rather than dict-insertion
+    order — the dependency-of comes before the depends-on, because `build_order` lists it first.
+    """
+    global_order = (blueprint or {}).get("build_order")
+    pos = {}
+    if isinstance(global_order, list):
+        for i, rid in enumerate(global_order):
+            pos.setdefault(rid, i)
+    sentinel = len(pos)  # any req_id not named in build_order sorts after every named one
+
+    def key(item):
+        i, rid = item
+        comp = components.get(rid) or {}
+        local = comp.get("build_order")
+        local = local if isinstance(local, int) else None
+        # 1) position in the blueprint's global build_order (authoritative);
+        # 2) per-component build_order int as a fallback ordering signal;
+        # 3) insertion index, to keep the sort stable for unordered components.
+        return (pos.get(rid, sentinel), sentinel if local is None else local, i)
+
+    return [rid for _, rid in sorted(enumerate(components.keys()), key=key)]
+
+
 def _md_list(items):
     return "\n".join("- %s" % i for i in items) if items else "- (none)"
 
@@ -106,8 +139,9 @@ def _entities_section(domain_bp):
     return "\n".join(L)
 
 
-def _render_build_skill(project, stack, style, domain, domain_bp, reqs_by_id):
+def _render_build_skill(project, stack, style, domain, domain_bp, reqs_by_id, blueprint=None):
     components = (domain_bp or {}).get("components") or {}
+    order = _ordered_component_ids(components, blueprint)
     pkg = (domain_bp or {}).get("package") or ""
     name = "anti-legacy:build-%s" % _slug(domain)
     head = [
@@ -141,8 +175,8 @@ def _render_build_skill(project, stack, style, domain, domain_bp, reqs_by_id):
         "",
         "## Build order (dependency-sorted)",
     ]
-    # order components by blueprint build_order if available, else declaration order
-    order = [r for r in components.keys()]
+    # `order` is the blueprint build_order projection (see _ordered_component_ids),
+    # not dict-insertion order — the dependency comes before its dependent.
     rows = []
     for i, req_id in enumerate(order, 1):
         comp = components[req_id]
@@ -154,7 +188,8 @@ def _render_build_skill(project, stack, style, domain, domain_bp, reqs_by_id):
     head.append("")
     head.append("## Components")
     out = ["\n".join(head)]
-    for req_id, comp in components.items():
+    for req_id in order:  # same build-order projection as the build-order list above
+        comp = components[req_id]
         _dom, node = reqs_by_id.get(req_id, (None, {}))
         out.append(_component_section(req_id, comp, node))
         out.append("")
@@ -177,9 +212,14 @@ def generate():
         sys.stderr.write("skill-forge: no blueprint.json with domains — run anti-legacy:blueprint "
                          "first (the forge generates build skills FROM the target architecture).\n")
         sys.exit(1)
-    project = (config.get("project_name")
-               or (config.get("project") or {}).get("name") if isinstance(config.get("project"), dict)
-               else config.get("project_name")) or blueprint.get("project") or "the target system"
+    # Resolve project_name: config.project_name → config.project.name → blueprint.project → fallback.
+    # (The old nested ternary repeated config.get("project_name") in its else branch — a dead
+    #  duplicate of the first operand. The isinstance guard stays: it keeps a non-dict `project`
+    #  value, e.g. a bare string, from blowing up on `.get("name")`.)
+    proj = config.get("project")
+    nested_name = proj.get("name") if isinstance(proj, dict) else None
+    project = (config.get("project_name") or nested_name
+               or blueprint.get("project") or "the target system")
     stack = blueprint.get("target_stack") or config.get("target_stack") or "the target stack"
     style = blueprint.get("style") or ""
     reqs_by_id = _requirements_by_id(graph)
@@ -188,7 +228,8 @@ def generate():
     os.makedirs(base, exist_ok=True)
     written = []
     for domain, domain_bp in blueprint["domains"].items():
-        name, content = _render_build_skill(project, stack, style, domain, domain_bp, reqs_by_id)
+        name, content = _render_build_skill(project, stack, style, domain, domain_bp, reqs_by_id,
+                                             blueprint=blueprint)
         d = os.path.join(base, "build-%s" % _slug(domain))
         os.makedirs(d, exist_ok=True)
         path = os.path.join(d, "SKILL.md")
