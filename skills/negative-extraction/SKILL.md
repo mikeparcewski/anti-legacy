@@ -61,7 +61,7 @@ python3 .anti-legacy/run.py wicked_estate --db .anti-legacy/graphs/<app>.db by-r
 
 (or read `.anti-legacy/annotations.jsonl` and select rows with `status == "resolved"`.)
 
-## Step 2: Crawl one ring DEEPER, for error behavior
+## Step 2: Crawl ring[1..N] DEEPER, for error behavior
 
 For each resolved node, expand past ring[0] specifically toward error handling — do NOT re-derive
 the primary rule. Per node:
@@ -72,13 +72,37 @@ python3 .anti-legacy/run.py wicked_estate --db <db> blast-radius <node_name>  # 
 python3 .anti-legacy/run.py wicked_estate --db <db> source <error_helper>     # read the error/validation callee
 ```
 
-Hunt for: exception/`catch` blocks, COBOL `INVALID KEY` / `AT END` / `ON SIZE ERROR` / `ON
-EXCEPTION`, `EVALUATE`/`IF` guards that set an error code or branch to an abort, `EXEC SQL` error
-clauses (`SQLCODE` checks, `WHENEVER ... GO TO`), rollback/ABEND/`STOP RUN` on failure, and field
-validations (range/format/required checks) before a write.
+Hunt for **error-bearing edges/nodes**: exception/`catch` blocks, COBOL `INVALID KEY` / `AT END` /
+`ON SIZE ERROR` / `ON EXCEPTION`, file-status checks, `EVALUATE`/`IF` guards that set an error code
+or branch to an abort, `EXEC SQL` error clauses (`SQLCODE` checks, `WHENEVER ... GO TO`),
+rollback/ABEND/`STOP RUN` on failure, and field validations (range/format/required checks) before a
+write. A node/edge is **error-relevant** when it matches one of these; ordinary happy-path callees
+are not, and following them is the wrong phase (that was extraction's ring[0]).
 
-Stop expanding when the error surface is covered or the ring/budget is exhausted (same budget keys
-as extraction: `crawl.max_rings`, `crawl.context_budget_chars`).
+### Stop condition (deterministic — two runs MUST crawl identically)
+
+The crawl is a bounded breadth-first expansion along error-bearing edges only. Run it the SAME way
+every time:
+
+1. **ring[0]** = the resolved node's own body (already read by extraction). Seed the frontier with
+   its error-bearing edges only.
+2. **ring[k] → ring[k+1]**: from every node added at ring[k], follow ONLY error-bearing edges
+   (the hunt list above) via `blast-radius`, read each new callee's `source`, and collect the
+   **NEW error-relevant nodes** (not seen at any shallower ring — dedupe by SymbolId).
+3. **STOP when EITHER terminal is hit — whichever comes first:**
+   - **(a) Fixpoint** — ring[k+1] discovers **zero new error-bearing nodes** (the error surface is
+     closed: every error edge reachable from the node has been read). This is the normal terminal.
+   - **(b) Max ring depth** — the crawl reaches `crawl.max_negative_rings` rings past ring[0]
+     (**default 3**, i.e. ring[1], ring[2], ring[3]). This bounds pathological fan-out so the pass
+     always terminates. Record that the node hit the depth cap (it may have an unexplored error
+     surface — a §6 finding, not a silent pass), do NOT crawl deeper.
+
+The depth cap is **configurable**: set `crawl.max_negative_rings` in `config.json` (falls back to
+the shared `crawl.max_rings` if unset, then to the default of 3). The char budget
+`crawl.context_budget_chars` is a secondary guard, not the primary terminal — the stop condition is
+defined by the fixpoint (a) and the ring-depth cap (b) above so the depth is reproducible
+regardless of how large any one source slice is. Following a non-error (happy-path) edge does NOT
+advance the ring or count toward the cap — only error-bearing edges expand the crawl.
 
 ## Step 3: Build the items (source-grounded vs derived)
 
