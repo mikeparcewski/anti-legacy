@@ -118,9 +118,12 @@ def validate_attestation(entry):
 def _stamp_captured(entries):
     """Stamp --captured entries by attestation (ISS-24). Returns (stamped_entries, unverified_sids).
 
-    An entry that already declares an explicit `provenance` keeps it. Otherwise: a VALID capture
+    An entry with an explicit NON-`captured-legacy` provenance passes through untouched (no
+    attestation needed — it isn't claiming the high tier). An entry that is unlabeled OR
+    explicitly claims `captured-legacy` MUST pass attestation validation: a VALID capture
     attestation -> `captured-legacy` (high); a missing/invalid one -> `captured-legacy-unverified`
-    (low). The unverified scenario_ids are returned so the caller can warn about the demotion.
+    (low). So a bare `"provenance": "captured-legacy"` label can NOT slip the high tier on its
+    word alone (ISS-24 review HIGH). The unverified scenario_ids are returned so the caller warns.
     """
     stamped, unverified = [], []
     for e in entries or []:
@@ -128,9 +131,11 @@ def _stamp_captured(entries):
         if not sid:
             continue
         out = dict(e)
-        if out.get("provenance"):
-            stamped.append(out)
+        declared = out.get("provenance")
+        if declared and declared != "captured-legacy":
+            stamped.append(out)  # a non-high explicit provenance is kept as-is
             continue
+        # unlabeled OR an explicit captured-legacy claim -> validate the attestation, never trust the label
         ok, _reason = validate_attestation(out)
         if ok:
             out["provenance"] = "captured-legacy"

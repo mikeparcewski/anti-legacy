@@ -64,6 +64,27 @@ class StampCapturedTest(unittest.TestCase):
         stamped, _ = cc._stamp_captured([{"golden_output": {}, "capture": dict(_ATTESTATION)}])
         self.assertEqual(stamped, [])
 
+    def test_explicit_captured_legacy_label_without_attestation_is_demoted(self):
+        # ISS-24 review (HIGH): a bare "provenance": "captured-legacy" must NOT bypass validation.
+        stamped, unverified = cc._stamp_captured(
+            [{"scenario_id": "x", "provenance": "captured-legacy", "golden_output": {}}])
+        self.assertEqual(stamped[0]["provenance"], "captured-legacy-unverified")
+        self.assertEqual(unverified, ["x"])
+
+    def test_explicit_captured_legacy_label_with_attestation_kept(self):
+        stamped, unverified = cc._stamp_captured(
+            [{"scenario_id": "x", "provenance": "captured-legacy", "golden_output": {},
+              "capture": dict(_ATTESTATION)}])
+        self.assertEqual(stamped[0]["provenance"], "captured-legacy")
+        self.assertEqual(unverified, [])
+
+    def test_explicit_lower_provenance_passes_through(self):
+        # a non-high explicit provenance (e.g. source-oracle) is kept as declared — no attestation needed
+        stamped, unverified = cc._stamp_captured(
+            [{"scenario_id": "y", "provenance": "source-oracle", "golden_output": {}}])
+        self.assertEqual(stamped[0]["provenance"], "source-oracle")
+        self.assertEqual(unverified, [])
+
 
 class FromContractsTest(unittest.TestCase):
     def setUp(self):
