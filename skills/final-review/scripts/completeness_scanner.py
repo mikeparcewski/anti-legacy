@@ -279,14 +279,19 @@ def scan_code(rel_path, lines):
                 "what": "unimplemented stub: %s" % line.strip()[:120],
             })
         # stub/mock/placeholder words in a COMMENT line only (avoid flagging
-        # legitimate mock-library imports/usage in test code).
+        # legitimate mock-library imports/usage in test code). Words like
+        # "dummy", "mock", "placeholder" in a comment describe intent or test
+        # data — they are informational, not structural incompleteness. Reserve
+        # HIGH for code tokens; use MEDIUM here regardless of is_test so that a
+        # comment like "// initialized with dummy seed data" in a fully-
+        # implemented production file does not block GATE_5_COMPLETENESS.
         if _COMMENT_LINE_RE.match(line):
             sm = _STUB_WORD_RE.search(line)
             if sm:
                 findings.append({
                     "line": i,
-                    "severity": "MEDIUM" if is_test else "HIGH",
-                    "what": "'%s' called out in comment: %s" % (sm.group(1).lower(), line.strip()[:120]),
+                    "severity": "MEDIUM",
+                    "what": "'%s' in comment: %s" % (sm.group(1).lower(), line.strip()[:120]),
                 })
 
     # Trivial brace-bodies (Java/Kotlin/Go/C#/TS/JS): scan the joined text so a
@@ -409,8 +414,23 @@ def scan_config(rel_path, lines):
     """CONFIG dimension. Placeholder/empty env vars, hardcoded test values."""
     findings = []
     base = os.path.basename(rel_path).lower()
-    # Example/sample env files are SUPPOSED to carry placeholders — downgrade.
-    is_example = ("example" in base or "sample" in base or "template" in base)
+    # Example/sample/dev-profile configs are SUPPOSED to carry placeholders or
+    # omit credentials (e.g. H2 in-memory DB has no password by design).
+    # Also match common Spring Boot / Quarkus / .NET dev-profile conventions:
+    # application-local.yml, application-dev.yml, appsettings.Development.json.
+    is_example = (
+        "example" in base or "sample" in base or "template" in base
+        or "-local." in base or ".local." in base
+        or "-dev." in base or ".dev." in base
+        or "-development." in base
+        or base.endswith("-test.yml") or base.endswith("-test.yaml")
+        or base.endswith("-test.properties")
+    )
+    # File-level signal: if this config references an in-memory DB anywhere,
+    # treat empty credentials as intentional (H2/SQLite dev-only databases).
+    full_text = "\n".join(lines)
+    has_inmemory_db = bool(_HARDCODED_TEST_RE.search(full_text) and
+                           re.search(r"h2:mem|:memory:|jdbc:h2:", full_text, re.IGNORECASE))
 
     for i, line in enumerate(lines, start=1):
         stripped = line.strip()
@@ -431,10 +451,14 @@ def scan_config(rel_path, lines):
         val_clean = val.strip().strip('"').strip("'")
 
         # Empty value for a sensitive key → fill-me-in smell.
+        # Downgrade to LOW for example/dev-profile files, and for configs that
+        # reference an in-memory database (H2/SQLite), where an empty password
+        # is intentional and correct — a local H2 with password: sa or "" is
+        # valid dev configuration, not a forgotten credential.
         if val_clean == "" and _SENSITIVE_KEY_RE.search(key):
             findings.append({
                 "line": i,
-                "severity": "LOW" if is_example else "HIGH",
+                "severity": "LOW" if (is_example or has_inmemory_db) else "HIGH",
                 "what": "empty value for sensitive config key '%s'" % key,
             })
             continue
