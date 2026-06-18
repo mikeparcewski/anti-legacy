@@ -59,6 +59,15 @@ For each node, locate:
 
 ## Step 3: Dispatch UAT subagents
 
+**Model tier: strongest — see AGENTS.md §9 (model-tier routing).** Independent
+UAT review is adversarial critique + semantic judgment — catching subtle
+divergence and resisting rubber-stamping is exactly where weak models fail
+quietly, so the *dispatched UAT reviewer subagent* is recommended to run on the
+strongest available tier. This is a recommendation the host/orchestrator SHOULD
+honor; the plugin cannot force a model, and a single-model runtime simply runs
+the reviewer on what it has (the anti-rubber-stamp gate checks below still apply
+regardless of tier).
+
 For each domain (or in parallel for all domains), dispatch a UAT reviewer:
 
 ```

@@ -265,6 +265,14 @@ if set.
 
 ## Step 4: Run the cluster-aware loop (or crawl by hand)
 
+**Model tier: strongest — see AGENTS.md §9 (model-tier routing).** The per-node
+`extract_rule` step (and any cross-source conflict it must arbitrate) is rule
+extraction — the IP of the pipeline; a confidently-wrong rule poisons everything
+built on it. Run the per-node extraction on the strongest available tier when
+the host/orchestrator can route it. The plugin recommends; the runtime decides —
+a single-model CLI simply runs it on what it has. (The loop's structural plumbing
+— worklist, cluster pass, atomic writes — is deterministic and tier-agnostic.)
+
 There are two ways to execute the per-node spine; both end every behavior node
 RESOLVED or RISK.
 

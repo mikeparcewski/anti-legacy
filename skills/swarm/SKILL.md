@@ -100,6 +100,14 @@ test scenarios.
 
 ## Step 4: Dispatch the developer subagent
 
+**Model tier: strongest — see AGENTS.md §9 (model-tier routing).** Code
+translation must preserve every business rule and numeric precision faithfully;
+a silent rule drop or COMP-3 slip is catastrophic, so the *dispatched developer
+subagent* is recommended to run on the strongest available tier. This is a
+recommendation the host/orchestrator SHOULD honor — the plugin cannot force a
+model; a single-model runtime simply runs it on what it has. (The swarm
+coordinator's own work — context assembly + sequencing — is mid-tier per §9.)
+
 Using Antigravity's agent dispatch mechanism, invoke the `developer` agent with
 the assembled micro-context:
 
