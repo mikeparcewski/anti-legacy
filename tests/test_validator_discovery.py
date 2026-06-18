@@ -659,6 +659,232 @@ class TestValidatorRunner(unittest.TestCase):
         success = runner.run_gate("GATE_0_DISCOVERY")
         self.assertTrue(success)
 
+class TestH1ConfidenceFloor(unittest.TestCase):
+    """H1: GATE_1_DESIGN must block when > 20% of active rules have confidence < 0.75."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="h1-")
+        self.config_path = os.path.join(self.tmp, ".anti-legacy", "config.json")
+        self.manifest_path = os.path.join(self.tmp, ".anti-legacy", "manifest.json")
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        with open(self.config_path, "w") as f:
+            json.dump({"target_stack": "java"}, f)
+        nfrs = os.path.join(self.tmp, ".anti-legacy", "requirements", "nfrs.md")
+        os.makedirs(os.path.dirname(nfrs), exist_ok=True)
+        with open(nfrs, "w") as f:
+            f.write("# NFRs\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _rg_path(self):
+        p = os.path.join(self.tmp, ".anti-legacy", "requirements", "requirements_graph.json")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        return p
+
+    def _make_rg(self, rules_conf):
+        """Write a requirements_graph.json with business rules at given confidence values."""
+        reqs = {}
+        for i, conf in enumerate(rules_conf):
+            req_id = f"REQ-{i:03d}"
+            reqs[req_id] = {
+                "status": "active",
+                "legacy_components": ["LEGACY-MODULE"],
+                "business_rules": [
+                    {"id": f"BR-{i}", "statement": "Do the thing", "confidence": conf}
+                ],
+            }
+        with open(self._rg_path(), "w") as f:
+            json.dump({"domains": {"billing": {"requirements": reqs}}}, f)
+
+    def test_all_high_confidence_passes(self):
+        self._make_rg([0.9] * 10)
+        runner = ValidatorRunner(self.tmp, self.config_path, self.manifest_path)
+        ok, errors = runner._run_gate_1_design_collect_errors()
+        conf_errors = [e for e in errors if "confidence" in e.lower() or "low_conf" in e.lower() or "0.75" in e]
+        self.assertEqual(conf_errors, [], f"High-confidence rules must not fail: {conf_errors}")
+
+    def test_98pct_low_confidence_fails(self):
+        # 10 rules: 9 low confidence (0.5), 1 high (0.9) → 90% low → FAIL
+        self._make_rg([0.5] * 9 + [0.9])
+        runner = ValidatorRunner(self.tmp, self.config_path, self.manifest_path)
+        ok, errors = runner._run_gate_1_design_collect_errors()
+        conf_errors = [e for e in errors if "confidence" in e.lower() or "extraction" in e.lower()]
+        self.assertTrue(conf_errors, "98% low-confidence rules must produce a GATE_1 error")
+
+    def test_exactly_at_20pct_passes(self):
+        # 5 low out of 25 = 20% → exactly at limit, should pass (limit is strict >)
+        self._make_rg([0.5] * 5 + [0.9] * 20)
+        runner = ValidatorRunner(self.tmp, self.config_path, self.manifest_path)
+        ok, errors = runner._run_gate_1_design_collect_errors()
+        conf_errors = [e for e in errors
+                       if "confidence" in e.lower() and "extraction" in e.lower()]
+        self.assertEqual(conf_errors, [],
+                         "Exactly 20% low-confidence must not exceed the limit")
+
+    def test_placeholder_text_fails(self):
+        reqs = {
+            "REQ-001": {
+                "status": "active",
+                "legacy_components": ["MOD"],
+                "business_rules": [
+                    {"id": "BR-1",
+                     "statement": "REVIEW REQUIRED: confidence below resolve threshold",
+                     "confidence": 0.596}
+                ],
+            }
+        }
+        with open(self._rg_path(), "w") as f:
+            json.dump({"domains": {"billing": {"requirements": reqs}}}, f)
+        runner = ValidatorRunner(self.tmp, self.config_path, self.manifest_path)
+        ok, errors = runner._run_gate_1_design_collect_errors()
+        ph_errors = [e for e in errors if "placeholder" in e.lower()]
+        self.assertTrue(ph_errors, "Placeholder rule statement must be a GATE_1 error")
+
+
+class TestH2DomainDensity(unittest.TestCase):
+    """H2: GATE_1_DESIGN must block when requirements/domains < 2 (domain fragmentation)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="h2-")
+        self.config_path = os.path.join(self.tmp, ".anti-legacy", "config.json")
+        self.manifest_path = os.path.join(self.tmp, ".anti-legacy", "manifest.json")
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        with open(self.config_path, "w") as f:
+            json.dump({"target_stack": "java"}, f)
+        nfrs = os.path.join(self.tmp, ".anti-legacy", "requirements", "nfrs.md")
+        os.makedirs(os.path.dirname(nfrs), exist_ok=True)
+        with open(nfrs, "w") as f:
+            f.write("# NFRs\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _rg_path(self):
+        p = os.path.join(self.tmp, ".anti-legacy", "requirements", "requirements_graph.json")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        return p
+
+    def _req(self, conf=0.9):
+        return {
+            "status": "active", "legacy_components": ["M"],
+            "business_rules": [{"id": "BR-1", "statement": "Do it", "confidence": conf}],
+        }
+
+    def test_312_micro_domains_fails(self):
+        """Reproduces the carddemo scenario: 312 domains, 526 requirements."""
+        domains = {}
+        req_counter = 0
+        for i in range(312):
+            req_counter += 1
+            domains[f"0000{i:04d}CardfileOpenCapability"] = {
+                "requirements": {f"REQ-{req_counter:04d}": self._req()}
+            }
+        # Add a few with 2 reqs to get to ~526 total, but keep density < 2
+        with open(self._rg_path(), "w") as f:
+            json.dump({"domains": domains}, f)
+        runner = ValidatorRunner(self.tmp, self.config_path, self.manifest_path)
+        ok, errors = runner._run_gate_1_design_collect_errors()
+        density_errors = [e for e in errors if "domain" in e.lower() and "fragmentation" in e.lower()]
+        self.assertTrue(density_errors, "312 micro-domains must trigger domain fragmentation error")
+
+    def test_healthy_domain_model_passes(self):
+        """10 domains with 6 requirements each = density 6.0 — should pass."""
+        domains = {}
+        for i in range(10):
+            reqs = {f"REQ-{i}-{j}": self._req() for j in range(6)}
+            domains[f"BillingCapability{i}"] = {"requirements": reqs}
+        with open(self._rg_path(), "w") as f:
+            json.dump({"domains": domains}, f)
+        runner = ValidatorRunner(self.tmp, self.config_path, self.manifest_path)
+        ok, errors = runner._run_gate_1_design_collect_errors()
+        density_errors = [e for e in errors if "fragmentation" in e.lower()]
+        self.assertEqual(density_errors, [], "Healthy domain density must not error")
+
+    def test_cobol_paragraph_domain_names_flagged(self):
+        """Domains named like COBOL paragraphs with 1 req each must be flagged."""
+        domains = {}
+        for i in range(10):
+            name = f"{i:04d}AcctfileOpen" if i < 6 else f"Capability{i}"
+            domains[name] = {"requirements": {f"REQ-{i}": self._req()}}
+        with open(self._rg_path(), "w") as f:
+            json.dump({"domains": domains}, f)
+        runner = ValidatorRunner(self.tmp, self.config_path, self.manifest_path)
+        ok, errors = runner._run_gate_1_design_collect_errors()
+        cobol_errors = [e for e in errors if "COBOL" in e or "paragraph" in e.lower()]
+        self.assertTrue(cobol_errors, "COBOL paragraph domain names must be flagged")
+
+
+class TestH3EvidenceStrengthGate(unittest.TestCase):
+    """H3: GATE_3_BUILD must block when evidence_strength_per_rule is all-weak."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="h3-")
+        self.config_path = os.path.join(self.tmp, ".anti-legacy", "config.json")
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        with open(self.config_path, "w") as f:
+            json.dump({"target_stack": "java"}, f)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write_report(self, strength_map, rule_coverage=1.0, fail_count=0):
+        p = os.path.join(self.tmp, ".anti-legacy", "evidence",
+                         "functional_comparison_report.json")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            json.dump({
+                "aggregate": {
+                    "rule_coverage": rule_coverage,
+                    "fail_count": fail_count,
+                    "evidence_strength_per_rule": strength_map,
+                }
+            }, f)
+
+    def test_all_weak_blocks(self):
+        """204/204 weak evidence → BLOCK (the carddemo annotation-stacking scenario)."""
+        strength = {f"RULE-{i:03d}": "weak" for i in range(204)}
+        self._write_report(strength)
+        runner = ValidatorRunner(self.tmp, self.config_path, evidence_root=self.tmp)
+        self.assertFalse(runner._check_round_trip_coverage(),
+                         "100% weak evidence must block GATE_3_BUILD")
+
+    def test_majority_weak_blocks(self):
+        """60% weak → BLOCK (exceeds 50% limit)."""
+        strength = {f"RULE-{i:03d}": "weak" if i < 60 else "strong" for i in range(100)}
+        self._write_report(strength)
+        runner = ValidatorRunner(self.tmp, self.config_path, evidence_root=self.tmp)
+        self.assertFalse(runner._check_round_trip_coverage(),
+                         "60% weak evidence must block GATE_3_BUILD")
+
+    def test_all_strong_passes(self):
+        """All strong evidence + coverage 1.0 + 0 fails → PASS."""
+        strength = {f"RULE-{i:03d}": "strong" for i in range(50)}
+        self._write_report(strength)
+        runner = ValidatorRunner(self.tmp, self.config_path, evidence_root=self.tmp)
+        self.assertTrue(runner._check_round_trip_coverage(),
+                        "All-strong evidence must pass")
+
+    def test_minority_weak_passes(self):
+        """30% weak (under 50% limit) + good coverage → PASS."""
+        strength = {f"RULE-{i:03d}": "weak" if i < 30 else "strong" for i in range(100)}
+        self._write_report(strength)
+        runner = ValidatorRunner(self.tmp, self.config_path, evidence_root=self.tmp)
+        self.assertTrue(runner._check_round_trip_coverage(),
+                        "30% weak evidence is under limit and must pass")
+
+    def test_no_evidence_strength_field_still_passes_on_coverage(self):
+        """Reports without evidence_strength_per_rule are not retroactively broken."""
+        p = os.path.join(self.tmp, ".anti-legacy", "evidence",
+                         "functional_comparison_report.json")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            json.dump({"aggregate": {"rule_coverage": 1.0, "fail_count": 0}}, f)
+        runner = ValidatorRunner(self.tmp, self.config_path, evidence_root=self.tmp)
+        self.assertTrue(runner._check_round_trip_coverage(),
+                        "Missing evidence_strength_per_rule must not retroactively block")
+
+
 class TestFix1EvidenceRoot(unittest.TestCase):
     """Fix 1: --evidence-root lets evidence live at the pipeline root, not the target dir."""
 
