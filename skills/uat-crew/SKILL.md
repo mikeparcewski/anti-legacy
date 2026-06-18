@@ -59,7 +59,7 @@ For each node, locate:
 
 ## Step 3: Dispatch UAT subagents
 
-**Model tier: strongest — see AGENTS.md §9 (model-tier routing).** Independent
+**Model tier: strongest — see [AGENTS.md](../../AGENTS.md) §9 (model-tier routing).** Independent
 UAT review is adversarial critique + semantic judgment — catching subtle
 divergence and resisting rubber-stamping is exactly where weak models fail
 quietly, so the *dispatched UAT reviewer subagent* is recommended to run on the

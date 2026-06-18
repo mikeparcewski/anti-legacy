@@ -100,7 +100,7 @@ test scenarios.
 
 ## Step 4: Dispatch the developer subagent
 
-**Model tier: strongest — see AGENTS.md §9 (model-tier routing).** Code
+**Model tier: strongest — see [AGENTS.md](../../AGENTS.md) §9 (model-tier routing).** Code
 translation must preserve every business rule and numeric precision faithfully;
 a silent rule drop or COMP-3 slip is catastrophic, so the *dispatched developer
 subagent* is recommended to run on the strongest available tier. This is a

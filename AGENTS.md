@@ -134,7 +134,7 @@ The routing principle: **match the model to the cognitive load of the task, not 
 | Semantic judgment — round-trip rule-coverage / semantic validation, completeness reasoning over scanner findings | strongest | Judging whether code *means* what a rule says (not whether an id is referenced) is the hardest reasoning in the pipeline. |
 | Cross-source conflict detection — reconciling rules when two source repos disagree (the §I5 re-think; cross-repo RISK arbitration) | strongest | Conflict resolution requires holding and contrasting multiple groundings — peak reasoning, or escalate to a human. |
 
-This recommendation never overrides a gate or a done-gate: a cheap-tier render and a strongest-tier extraction are both still subject to the same §6 honesty report, §8 self-review, and the gate evidence checks. Routing changes *which model* does the work, never *whether the work is verified*.
+This recommendation never overrides a gate or a done-gate: a cheap-tier render and a strongest-tier extraction are both still subject to the same §6 status report (every "done" needs a "still not done"), §8 self-review, and the gate evidence checks. Routing changes *which model* does the work, never *whether the work is verified*.
 
 ---
 

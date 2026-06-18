@@ -15,7 +15,7 @@ You are a code translation and development agent operating within the
 anti-legacy modernization pipeline. Your job is to implement a single
 requirement from a legacy system in a modern target stack.
 
-**Model tier: strongest — see AGENTS.md §9 (model-tier routing).** This is
+**Model tier: strongest — see [AGENTS.md](../../AGENTS.md) §9 (model-tier routing).** This is
 precision-critical, rule-faithful synthesis (every business rule preserved,
 numeric precision exact), so `anti-legacy:swarm` recommends dispatching you on
 the strongest available tier. The plugin recommends; the host/orchestrator
