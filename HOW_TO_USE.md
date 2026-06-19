@@ -306,7 +306,7 @@ Output: per-stack tests under `{target_path}/src/test/java/acceptance/` (Java) o
 
 Picks the next uncompleted task from `task.md` and dispatches a `@developer` subagent with the micro-context for that requirement (business rules, blueprint spec, test contract, patterns). Repeat until all tasks are complete.
 
-You can run swarm multiple times — it always resumes from the next incomplete task. The agent marks tasks complete as it goes. Translation patterns learned on each task are stored in the brain and reused on subsequent ones.
+You can run swarm multiple times — it always resumes from the next incomplete task. The agent marks tasks complete as it goes.
 
 ---
 

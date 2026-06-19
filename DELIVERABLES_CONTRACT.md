@@ -178,11 +178,6 @@ the *manifest's* shape, a different file): `project_name`, `source_apps[] {name,
 `coverage{behavior_kinds, estate_behavior_kinds, structural_kinds, resolve_threshold,
 capability_partition}`, `crawl{max_rings, context_budget_chars}`, `wicked_estate_path?`.
 
-**git-brain decisions** (decisions-log only): orphan branch `brain/anti-legacy/decisions`,
-append-only. Read via the dispatcher: `python3 .anti-legacy/run.py git_brain search --query "..."
---category decisions` (and `git_brain` has list/search). Records carry `id, path, tags[], type,
-title?, created_at`, body Markdown. Do NOT read brain branches with raw git.
-
 **manifest.json** (evidence-log): `phase {current, completed[], blocked_reason?}`,
 `gates {<GATE_ID>: {opinion/status, evaluator, rationale, evidence[]}}`,
 `artifacts {<id>: {path, format, produced_by, status, produced_at, depends_on[], checksum?}}`.

@@ -98,10 +98,9 @@ The script enforces the done-gate exit status:
 * If the report status is `GAPS` (only uncaptured programs with business logic exist): the script exits **zero (0)** but registers the report as `draft`. GAPS require human review and sign-off at `GATE_1_DESIGN`.
 * If the report status is `CLEAN` (no errors, no gaps): the script exits **zero (0)** and registers the report as `final`.
 
-## Step 4: Register Artifacts & Telemetry
+## Step 4: Register Artifacts
 Upon completion, the script automatically:
 1. Registers the artifacts `graph-validation-report` and `graph-validation-md` with `manifest`.
-2. Telemeters the run status and counts to `git-brain`.
 
 **GATE_1_DESIGN Checklist Note**:
 Reviewer checklist item 3b requires that the `graph-validation-report` status is not `BLOCKED` and that every gap is either mapped to a requirement or explicitly justified/omitted.

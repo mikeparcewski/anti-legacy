@@ -171,7 +171,7 @@ Before any code is written, every requirement node gets a test contract: specifi
 
 These contracts are assembled into a review packet — a single offline document the team can read in a browser, a PDF, or a shared drive. No external systems required.
 
-**The stakeholder deliverables package.** Once the requirements graph is ready, `anti-legacy:deliverables` renders a fuller stakeholder package alongside the review packet — a product-requirements doc (`anti-legacy:prd`), Mermaid architecture diagrams (`anti-legacy:diagrams`), a detailed functional test strategy and scripts (`anti-legacy:test-plan` / `anti-legacy:test-scripts`), an end-to-end migration plan (`anti-legacy:migration-plan`), and the *living* risk / decisions / evidence logs (`anti-legacy:risk-log` / `anti-legacy:decisions-log` / `anti-legacy:evidence-log`). They render into `.anti-legacy/deliverables/` (with a `README.md` index), each registered as a manifest artifact, and **none of them advances the pipeline** — they reuse the pipeline's existing structured artifacts rather than coining new prose. The Tier-A "snapshot" deliverables (prd, diagrams, test-plan, test-scripts, migration-plan) gate on the producer readiness check (see *The readiness gate* below); the three living logs deliberately do not, so they can run on an incomplete pipeline to surface its gaps.
+**The stakeholder deliverables package.** Once the requirements graph is ready, `anti-legacy:deliverables` renders a fuller stakeholder package alongside the review packet — a product-requirements doc (agent-enriched via `anti-legacy:prd`), Mermaid architecture diagrams, a detailed functional test strategy and scripts (agent-enriched via `anti-legacy:test-scripts`), an end-to-end migration plan, and the *living* risk / decisions / evidence logs. They render into `.anti-legacy/deliverables/` (with a `README.md` index), each registered as a manifest artifact, and **none of them advances the pipeline** — they reuse the pipeline's existing structured artifacts rather than coining new prose. The Tier-A "snapshot" deliverables gate on the producer readiness check (see *The readiness gate* below); the three living logs deliberately do not, so they can run on an incomplete pipeline to surface its gaps.
 
 ---
 
@@ -256,7 +256,7 @@ All pipeline skills call their scripts through a single dispatcher — `python3 
 *   **Purpose**: Initializes the modernization workspace and records project configurations.
 *   **Inputs & References**:
     *   the manifest template (package data in `antilegacy_core`) (scaffolds the initial project manifest)
-    *   `skills/setup/references/anti_patterns.md` (seeded into the git-brain to prevent line-by-line or microservice anti-patterns)
+    *   `skills/setup/references/anti_patterns.md` (reference: anti-patterns to prevent line-by-line or microservice rewrites)
 *   **Outputs & Deliverables**:
     *   `.anti-legacy/manifest.json` (project status state)
     *   `.anti-legacy/config.json` (source application paths and target stack selection)

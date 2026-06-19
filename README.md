@@ -106,12 +106,12 @@ Once the requirements graph is ready, **`anti-legacy:deliverables`** renders the
 stakeholder package into `.anti-legacy/deliverables/` — each registered in the manifest, nothing
 advancing the pipeline:
 
-- **Product requirements** — `product-requirements.md` (`anti-legacy:prd`)
-- **Architecture diagrams** — Mermaid C4 / ERD / sequence / deployment (`anti-legacy:diagrams`)
-- **Test strategy** — data-parity / UAT / E2E / API, with a traceability matrix (`anti-legacy:test-plan`)
-- **Functional test scripts** — the same four types, in the target stack (`anti-legacy:test-scripts`)
-- **Migration plan** — epics→stories→tasks→subtasks (prep→build→deploy→test), Markdown + Jira CSV (`anti-legacy:migration-plan`)
-- **Risk log**, **decisions log (ADRs)**, **evidence log with receipts** — *living* deliverables, re-run at each gate (`anti-legacy:risk-log`, `anti-legacy:decisions-log`, `anti-legacy:evidence-log`)
+- **Product requirements** — `product-requirements.md` (agent-enriched via `anti-legacy:prd`)
+- **Architecture diagrams** — Mermaid C4 / ERD / sequence / deployment
+- **Test strategy** — data-parity / UAT / E2E / API, with a traceability matrix
+- **Functional test scripts** — the same four types, in the target stack (agent-enriched via `anti-legacy:test-scripts`)
+- **Migration plan** — epics→stories→tasks→subtasks (prep→build→deploy→test), Markdown + Jira CSV
+- **Risk log**, **decisions log (ADRs)**, **evidence log with receipts** — *living* deliverables, re-run at each gate
 
 `anti-legacy:deliverables` runs them all and writes a `deliverables/README.md` index. They
 complement the `review-packet` (the single GATE_1 review doc) and reuse the pipeline's existing
@@ -132,20 +132,6 @@ There is no separate "modern" survey track: modern languages are indexed by the 
 
 ---
 
-## Memory system (git-brain)
-
-Translation patterns and learnings are stored on **orphan branches** in the project's git repo — no external services needed. Run `python3 .anti-legacy/run.py git_brain init` to create the brain branches. (All workspace script calls go through the `.anti-legacy/run.py` dispatcher written by `anti-legacy:setup`, never a bare `scripts/…` path.)
-
-| Branch | Stores |
-|---|---|
-| `brain/anti-legacy/learnings` | Episodic notes from translation tasks |
-| `brain/anti-legacy/decisions` | Gate decisions and architectural choices |
-| `brain/anti-legacy/patterns` | Reusable code translation recipes |
-
-Learnings compound across sessions. `git push` shares them with the team.
-
----
-
 ## Demo
 
 A working demo with 3 COBOL programs (customer management, billing, payment gateway) is in `demo/legacy-src/`. The end-to-end test proves the pipeline:
@@ -161,7 +147,7 @@ This runs: setup → `wicked-estate index` (survey → deterministic stats diges
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v
+python3 -m pytest tests/ -q
 ```
 
 ---
@@ -172,7 +158,7 @@ python3 -m unittest discover -s tests -v
 anti-legacy/
 ├── plugin.json, gemini-extension.json   plugin + extension manifests
 ├── AGENTS.md  (← CLAUDE.md, GEMINI.md are symlinks)   the agent contract
-├── skills/                              ~27 skills — the whole bundle
+├── skills/                              ~37 skills — the whole bundle
 │   ├── anti-legacy-expert/              internals SME + the shared library:
 │   │   └── scripts/antilegacy_core/       manifest, wicked_estate (engine seam),
 │   │       coverage, extract, domain_graph, validator, … + schemas/ (package data)
