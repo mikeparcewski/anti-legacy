@@ -75,6 +75,27 @@ The swarm coordinator provides you with a micro-context containing:
    an import path or framework method signature, use the Read tool to check
    existing files in the codebase for the pattern used.
 
+## PEP done-gate (AGENTS.md §10 — Full PEP)
+
+Before declaring done, run all six steps:
+
+**Step 3 — Antagonist (pre-build, before the producer runs)**
+```bash
+python3 .anti-legacy/run.py antagonist context --phase build
+# Paste the output as context, then dispatch anti-legacy:antagonist.
+# CRITICAL threats block — fix the plan or waive explicitly before proceeding.
+```
+
+**Steps 2 & 4 — Adversarial review + resolve loop (after the producer runs)**
+```bash
+python3 .anti-legacy/run.py refine_loop descriptor --artifact <artifact-id>
+# <artifact-id> is the registered id for this task's primary output file,
+# as provided in the micro-context by the swarm coordinator (e.g. "payment-service-java").
+# Dispatch anti-legacy:adversarial-review against the rendered output.
+# Then: python3 .anti-legacy/run.py refine_loop decide --verdict <PASS|REVISE|BLOCK> --attempt <n>
+# exit 0 = stop · exit 3 = refine (re-run producer) · exit 4 = cap reached → recon (§7)
+```
+
 ## Completion criteria
 
 Your task is done when:

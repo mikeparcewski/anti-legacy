@@ -138,6 +138,41 @@ The routing principle: **match the model to the cognitive load of the task, not 
 
 This recommendation never overrides a gate or a done-gate: a cheap-tier render and a strongest-tier extraction are both still subject to the same §6 status report (every "done" needs a "still not done"), §8 self-review, and the gate evidence checks. Routing changes *which model* does the work, never *whether the work is verified*.
 
+### §10 — Phase Execution Protocol (PEP): every phase runs the same loop
+
+Before any phase declares done, it runs these six steps **in order**. This is not a gate — it is the standard of discipline every producer follows within a phase. The gate checks *across* phases; PEP verifies *within* a phase.
+
+```
+plan → antagonist → [produce] → review → resolve → test → validate
+```
+
+The step numbers reflect logical groupings, not alphabetical order: step 3 (antagonist) runs *before* the producer; step 2 (review) runs *after* the producer. Execution order: 1 → 3 → [produce] → 2 → 4 → 5 → 6.
+
+| Step | What it means | Skill / tool |
+|---|---|---|
+| **1. Plan** | State what the phase output will contain, which rules/requirements it covers, and what "done" looks like. Assemble the micro-context. | Producing skill's "What to do" block |
+| **2. Review** | Advisory self-review: dispatch `anti-legacy:adversarial-review` against the rendered output (§8). Runs AFTER the producer. | `adversarial-review` + `refine_loop descriptor` |
+| **3. Antagonist** | Pre-build threat modeling: dispatch `anti-legacy:antagonist` against the PLAN before the producer runs. Attack the design while it is cheap to change. CRITICAL threats block until acknowledged; MEDIUM/MINOR are advisory. | `anti-legacy:antagonist` + `antagonist context --phase` |
+| **4. Resolve** | `refine_loop decide` — PASS=stop (converged); REVISE/BLOCK=refine (re-run producer, re-review); cap=recon (§7). | `refine_loop decide` |
+| **5. Test** | Run the phase-specific evidence check (coverage.py, validator_discovery, functional_tests, completeness_scanner). | Phase-specific tool |
+| **6. Validate** | `precheck require_ready` + `manifest gate` confirm the gate evidence is present and checksummed. | `precheck` + `gatekeeper` |
+
+**Phase tier table** — which steps apply to which phase:
+
+| Tier | Steps | Phases |
+|---|---|---|
+| **Full PEP** | All 6 (including antagonist) | extraction, graph-translate, blueprint, test-strategy, plan, build, functional-tests, semantic-validation, uat |
+| **Minus-antagonist** | 1, 2, 4, 5, 6 (no antagonist — output is deterministic render) | analyze, review-packet, document, final-review |
+| **Lite** | 2, 6 only (review + validate) | setup, survey, deploy |
+
+**Antagonist model tier**: `strongest` — threat modeling requires the same judgment as adversarial critique. A weak model rubber-stamps the plan. See §9.
+
+**Key rules**:
+- The antagonist runs BEFORE the producer, not after. It attacks the plan while it is still cheap to change.
+- An unacknowledged CRITICAL antagonist threat blocks the phase from advancing. Waive explicitly with rationale: `python3 .anti-legacy/run.py manifest learn --key antagonist_waiver/<phase>/<T-id> --value "<rationale>"`.
+- PEP never clears a gate. Steps 2–4 are advisory (§8); step 6 is the gate check. PEP adds discipline within a phase; gates enforce transitions between phases.
+- The bypass hardening patterns H1–H5 (confidence laundering, annotation stacking, reflection-only tests) were discovered in production because no antagonist ran before the build phase. PEP step 3 is the pre-build defense.
+
 ---
 
 ## Universal Don'ts
@@ -177,6 +212,8 @@ This recommendation never overrides a gate or a done-gate: a cheap-tier render a
 | Compiling team review document | `anti-legacy:review-packet` |
 | Producing the stakeholder deliverables package (graph ready → PRD, diagrams, test strategy + scripts, migration plan, risk/decisions/evidence logs) | `anti-legacy:deliverables` |
 | Adversarial review of ANY generated output — individually or batch (read-only critic vs its source data → PASS/REVISE/BLOCK; advisory, not a gate; the pre-build analog of `anti-legacy:uat-reviewer`) | `anti-legacy:adversarial-review` |
+| Pre-build threat modeling — attacks a phase PLAN before the producer runs (PEP §10 step 3); generates a structured threat list; CRITICAL threats block; MEDIUM/MINOR advisory. Distinct from adversarial-review (which reviews output AFTER production) | `anti-legacy:antagonist` |
+| Validating requirements graph legacy fields against actual source programs — JCL-to-COBOL resolution, missing-program gaps, content spot-checks; run after extraction/graph-translate, before blueprint | `anti-legacy:graph-validator` |
 | Detailed product requirements (PRD) | `anti-legacy:prd` |
 | Architecture diagrams (Mermaid) | `anti-legacy:diagrams` |
 | Detailed functional test strategy (data-parity / UAT / E2E / API) | `anti-legacy:test-plan` |
@@ -221,7 +258,10 @@ All scripts are invoked through the workspace dispatcher: `python3 .anti-legacy/
 | `refine_loop` | The bounded make→review→refine primitive (§8): `descriptor --artifact <id>` resolves the generic single-artifact critic target (rendered file + source data from the §2 spine + manifest `depends_on`); `decide --verdict … --attempt …` returns the next move (refine / stop-converged / stop-at-§7-cap-recommend-recon / forced) with a branchable exit code | Acting on the decision (it computes only — the agent runs the producer + critic) or clearing a gate |
 | `differential_equivalence` | The executed output-parity harness (GATE_3C_DIFFERENTIAL, ISS-7): `run --corpus <golden> --actuals <target> [--contracts …]` diffs the built target's outputs against a golden legacy corpus field-by-field within each contract's `parity_rules` (precision-aware Decimal — COMP-3 safe), writing `differential-equivalence-report.json` with a `golden_confidence` + `gate_posture` (PASS/WARN/BLOCK/NOT_APPLICABLE). `captured-legacy` only counts as high confidence when the entry carries a `capture` attestation `{method, source, captured_at}` (`_has_capture_attestation`, ISS-24) — an unattested one is downgraded to low + warned, so BLOCK needs an attested golden. Vacuous-safe (no corpus → NOT_APPLICABLE) | Relaxing a `parity_rule` to force a money mismatch to pass; treating a low/medium-confidence WARN as a hard block; or trusting a bare `captured-legacy` label (it is attestation-enforced) |
 | `capture_corpus` | Assembles the golden corpus for GATE_3C from what is available — `assemble --contracts <dir> [--oracle <json>] [--captured <json>]` overlays sources by `scenario_id` (captured-legacy > source-oracle > contract-expected), tags each entry's `provenance`, and emits a provenance report grading overall confidence + warnings. `--captured` only stamps `captured-legacy` on entries carrying a valid `capture` attestation (`validate_attestation`, ISS-24); the rest are demoted to `captured-legacy-unverified` (low) and named in the warnings | Mislabeling a contract-expected/oracle golden as `captured-legacy` to force a hard gate — it won't work (a bare label with no `capture` attestation is auto-demoted to low); the provenance must be honest |
+| `antagonist` | Pre-build threat context assembler (PEP §10 step 3): `antagonist context --phase <phase>` reads manifest, coverage-report, requirements_graph, functional-comparison-report, and UAT reserved identities to emit the threat-surface context block the critic uses to generate threats. `antagonist tier --phase <phase>` prints the PEP tier (full / minus-ant / lite). Read-only — never writes audit.jsonl, never advances a phase | Running the non-deterministic threat generation (that is dispatching `anti-legacy:antagonist` as a critic) |
 | `capability_graph` | md-as-code self-introspection of the plugin's own skills → capability-graph JSON (capabilities, triggers, phase/gate model): `capability_graph [--root <dir>] [--json]` classifies `skills/*/SKILL.md` (frontmatter `name:`) as behavior vs reference/docs, mines capabilities + Use-when triggers, joins the manifest phase/gate model, and prints the JSON (the only output — no static page) | Indexing the legacy estate (that is `wicked_estate index`) — this introspects the plugin's own skills, not target/legacy source |
+| `graph_validator` | Validates requirements graph legacy fields against actual source programs — JCL-to-COBOL resolution, missing-program gaps, content spot-checks; run after extraction/graph-translate, before blueprint | Direct code generation or modifying the blueprint |
+| `stack_discovery` | Probes workspace to discover legacy + target stack conventions: inspects build manifests (pom.xml, go.mod, pyproject.toml, etc.), verifies test root paths on disk, and derives utility name patterns from graph node names. Writes `.anti-legacy/stack-profile.json` (artifact id `stack-profile`). Downstream scripts consult `load_profile(workspace)` for stack facts; explicit `config.coverage.*` overrides always win. Run after survey (full profile) or at setup time (target-only). | Hard-coding stack paths or patterns that `stack_discovery` can prove |
 
 `python3 .anti-legacy/run.py manifest status` is the authoritative pipeline state. File presence is not.
 

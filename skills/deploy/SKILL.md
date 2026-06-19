@@ -49,15 +49,7 @@ print('GATE_4_UAT: cleared ✓')
 "
 ```
 
-## Step 2: Query git-brain for deployment patterns
-
-```bash
-python3 .anti-legacy/run.py git_brain search \
-  --query "deployment {target_stack} {deployment_target} Dockerfile CI/CD pipeline" \
-  --limit 5
-```
-
-## Step 3: Generate Dockerfile
+## Step 2: Generate Dockerfile
 
 Write `{target_path}/Dockerfile` appropriate for the target stack:
 
@@ -219,22 +211,13 @@ Write `{target_path}/DEPLOY.md`:
 - Health check endpoint
 - Environment variables required
 
-## Step 7: Store deploy patterns in git-brain
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Deployment [{project_name}]: {target_stack} → {deployment_target}. Image: {registry}/{image_name}. Dockerfile at {target_path}/Dockerfile. Pipeline: {ci_platform}." \
-  --tags "pattern,deploy,{target_stack},{deployment_target}" \
-  --category patterns
-```
-
-## Step 8: Done-gate, then register + advance phase to complete
+## Step 7: Done-gate, then register + advance phase to complete
 
 **Done-gate (BLOCKING).** Before registering the deploy artifact or advancing the
 phase, assert that the chosen deploy artifact is a real FILE that deploy actually
 wrote. Pick `{deploy_artifact}` = the manifest file produced for
-`{deployment_target}` — for example `Dockerfile` (always written by Step 3), or
-the platform manifest written in Step 4 (`deploy/cloudrun.yaml`,
+`{deployment_target}` — for example `Dockerfile` (always written by Step 2), or
+the platform manifest written in Step 3 (`deploy/cloudrun.yaml`,
 `deploy/task-definition.json`, `deploy/k8s/deployment.yaml`, or
 `docker-compose.yml`). It MUST be an existing file, never a directory.
 
@@ -270,7 +253,7 @@ python3 .anti-legacy/run.py manifest register deployment-artifacts \
 python3 .anti-legacy/run.py manifest advance complete
 ```
 
-## Step 9: Final pipeline summary
+## Step 8: Final pipeline summary
 
 Print the complete pipeline summary:
 
@@ -293,7 +276,6 @@ Phases completed:
   ✓ Deploy     → Dockerfile + {deployment_target} manifests
 
 Artifacts: .anti-legacy/manifest.json
-Git-brain: {brain_path}
 
 To deploy:
   cd {target_path}
@@ -307,5 +289,4 @@ To deploy:
 - `{target_path}/deploy/` — platform manifests
 - `{target_path}/{ci_config}` — CI/CD pipeline
 - `{target_path}/DEPLOY.md` — deployment runbook
-- Git-brain: deployment pattern stored for reuse
 - Manifest: phase = `complete`, pipeline = **complete**

@@ -3,15 +3,14 @@ name: "anti-legacy:setup"
 description: >
   Initialize the .anti-legacy/ workspace and manifest for a new modernization project.
   Run once per project before any other anti-legacy skill. Creates directory structure,
-  config.json template, audit trail, and seeds git-brain with project context.
+  config.json template, audit trail, and seeds the patterns directories.
   Use when: "start a modernization", "init anti-legacy", "set up a new migration project".
 ---
 
 # anti-legacy:setup
 
 One-time initialization of the `.anti-legacy/` workspace. Creates all required
-directories, the manifest, the audit trail, and seeds git-brain with
-project context for future recall.
+directories, the manifest, the audit trail, and seeds the patterns directories.
 
 ## Cross-Platform Notes
 
@@ -31,7 +30,7 @@ python3 .anti-legacy/run.py <script> <args...>
 
 where `<script>` is the bare script stem (no `scripts/` prefix, no `.py`
 suffix) — e.g. `python3 .anti-legacy/run.py manifest status`,
-`python3 .anti-legacy/run.py git_brain store ...`. The CWD is ALWAYS the
+`python3 .anti-legacy/run.py coverage ...`. The CWD is ALWAYS the
 workspace, so `.anti-legacy/run.py` always resolves. `run.py` is a thin exec
 seam that resolves the bare stem to the bundled `antilegacy_core` library
 (run as `python -m antilegacy_core.<stem>`) or a skill-local
@@ -155,42 +154,7 @@ print('Pattern directories created')
 "
 ```
 
-## Step 4: Initialize git-brain
-
-First create the brain's orphan storage branches. Without this `init`, the
-subsequent `store` / `ingest` calls exit 1 because their target branches do
-not exist:
-
-```bash
-python3 .anti-legacy/run.py git_brain init
-```
-
-Store project context so future sessions can recall it without re-reading config:
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Project {name}: modernizing {source_apps} → {target_stack} at {target_path}. Deployment: {deployment_target}. Gates: GATE_1_DESIGN, GATE_2_PLAN, GATE_3_BUILD, GATE_4_UAT. Workspace: .anti-legacy/" \
-  --tags "decision,setup,project-context" \
-  --category decisions
-```
-
-Also, seed the brain with modernization anti-patterns and traversal strategies to enforce architectural best practices. These reference files ship with this skill (`references/`), under the **plugin root**, not the workspace, so they MUST be referenced by the absolute plugin root (`{plugin_root_abs}/skills/setup/references/...`) exactly like Step 1's `init` and Step 1.5's dispatcher write — a workspace-relative path does NOT resolve here (the CWD is the target workspace) and `git_brain ingest` would fail with `File not found`:
-
-```bash
-python3 .anti-legacy/run.py git_brain ingest \
-  --file {plugin_root_abs}/skills/setup/references/anti_patterns.md \
-  --category patterns \
-  --tags "anti-pattern,architecture,infrastructure" \
-  --type reference
-
-python3 .anti-legacy/run.py git_brain ingest \
-  --file {plugin_root_abs}/skills/setup/references/traversal_strategies.md \
-  --category patterns \
-  --tags "traversal,architecture,planning,risk" \
-  --type reference
-```
-
-## Step 5: Done-gate, advance, and confirm
+## Step 4: Done-gate, advance, and confirm
 
 Before advancing, assert the setup actually produced its two load-bearing
 artifacts — the dispatcher (`run.py`) and the manifest (`manifest.json`).
@@ -216,7 +180,6 @@ enum value — there is no `setup` phase) and confirm:
 
 ```bash
 python3 .anti-legacy/run.py manifest advance survey
-python3 .anti-legacy/run.py learn_coordinator --phase setup
 python3 .anti-legacy/run.py manifest status
 ```
 
@@ -226,4 +189,3 @@ Report to the user:
 - Roles recorded: architect=`{architect}`, uat_reviewer=`{uat_reviewer}`
 - Next step: run `anti-legacy:survey` to scan the legacy codebase
 - Pattern directories created for each source→target language pair
-- Brain seeded with modernization anti-patterns (line-by-line, microservices, infrastructure)

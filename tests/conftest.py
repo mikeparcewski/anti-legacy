@@ -11,7 +11,7 @@ CANONICAL RUNNER — pytest only (ISS-13).
 This module is a pytest `conftest.py`. `python -m unittest discover` does NOT load
 conftest, so under plain unittest the leaf-script paths above are never injected and
 the suite reports dozens of spurious import/collection errors (`_FailedTest`) and
-subprocess `-m` failures (`No module named antilegacy_core` / `git_brain` / ...).
+subprocess `-m` failures (`No module named antilegacy_core` / ...).
 That red is an artifact of the wrong runner, not a real failure — pytest is green.
 unittest-discover is unsupported by design; see tests/README.md.
 """

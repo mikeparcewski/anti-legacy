@@ -4,18 +4,14 @@ decisions_log — render an ADR-style (Architecture Decision Record) decisions l
 from the anti-legacy pipeline's structured data.
 
 The decisions log is a LIVING deliverable (status=draft): it grows as gates are
-signed off, as the blueprint settles the architecture, as scope is cut, and as
-the team records rationale in git-brain. It is rendered DETERMINISTICALLY from
-four decision sources — never coined by an LLM:
+signed off, as the blueprint settles the architecture, and as scope is cut. It is
+rendered DETERMINISTICALLY from three decision sources — never coined by an LLM:
 
   1. Gate sign-offs   — audit.jsonl `gate-signed-off` events (each Accepted) plus
                         the manifest's current `gates` opinions.
   2. Architecture     — blueprint.json `style` + per-domain `package`, and the
                         config/requirements `migration_mode`.
   3. Scope cuts       — dropped requirements (disposition == "drop") with reason.
-  4. git-brain        — OPTIONAL. The agent dumps the brain's `decisions` category
-                        into a JSON file (git_brain has no JSON output mode) and
-                        passes it via --git-brain. Absent/empty -> sources 1-3 only.
 
 Each ADR cites its source. A summary index table sits at the top. The renderer
 states which sources were available and surfaces when the log is partial (§6
@@ -43,44 +39,6 @@ OUTPUT_REL = "decisions-log.md"
 SRC_GATE = "gate sign-off"
 SRC_ARCH = "architecture (blueprint/config)"
 SRC_SCOPE = "scope (dropped requirement)"
-SRC_BRAIN = "git-brain"
-
-
-# --------------------------------------------------------------------------- #
-# git-brain dump loader (the one optional, agent-supplied source).
-# --------------------------------------------------------------------------- #
-def _load_git_brain(path):
-    """Load the agent-supplied git-brain decisions dump.
-
-    git_brain's `list`/`search`/`read` print human-readable text, not JSON, so
-    the SKILL instructs the agent to assemble a small JSON file and pass it here.
-    Accepted shapes (degrade gracefully — bad/absent input yields []):
-
-      [ {id?, title?, statement?/body?/content?, tags?[], created_at?,
-         context?, consequences?}, ... ]
-      {"decisions": [ ... same ... ]}
-
-    Every field is optional; whatever is present is rendered, the rest is shown
-    as "_not recorded_".
-    """
-    if not path:
-        return []
-    if not os.path.exists(path) or os.path.isdir(path):
-        print("Warning: --git-brain file not found: {0} (rendering without it)".format(path),
-              file=sys.stderr)
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError) as e:
-        print("Warning: --git-brain file unreadable ({0}); rendering without it".format(e),
-              file=sys.stderr)
-        return []
-    if isinstance(data, dict):
-        data = data.get("decisions") or data.get("entries") or []
-    if not isinstance(data, list):
-        return []
-    return [d for d in data if isinstance(d, dict)]
 
 
 # --------------------------------------------------------------------------- #
@@ -253,47 +211,20 @@ def _scope_decisions(requirements):
     return adrs
 
 
-def _brain_decisions(brain_rows):
-    """git-brain decisions: render each recorded decision as an ADR."""
-    adrs = []
-    for row in brain_rows:
-        title = row.get("title") or row.get("id") or "Recorded decision"
-        statement = (row.get("statement") or row.get("body") or row.get("content")
-                     or row.get("decision") or "_no statement recorded_")
-        context = row.get("context") or "Captured in git-brain (category: decisions)."
-        consequences = row.get("consequences") or "_not recorded_"
-        date = row.get("created_at") or row.get("date") or "_undated_"
-        tags = row.get("tags") or []
-        if isinstance(tags, list) and tags:
-            context = context + " Tags: {0}.".format(", ".join(str(t) for t in tags))
-        adrs.append({
-            "title": title,
-            "status": row.get("status") or "Accepted",
-            "date": date,
-            "context": context,
-            "decision": statement,
-            "consequences": consequences,
-            "source": SRC_BRAIN,
-        })
-    return adrs
-
-
 # --------------------------------------------------------------------------- #
 # Render
 # --------------------------------------------------------------------------- #
-def render(audit, manifest, blueprint, config, requirements, brain_rows):
+def render(audit, manifest, blueprint, config, requirements):
     """Render the full ADR-style decisions log. Returns (markdown, adr_count)."""
     gate = _gate_decisions(audit, manifest)
     arch = _architecture_decisions(blueprint, config, requirements)
     scope = _scope_decisions(requirements)
-    brain = _brain_decisions(brain_rows)
 
-    # Number ADRs in a stable, grouped order: gate, arch, scope, brain.
+    # Number ADRs in a stable, grouped order: gate, arch, scope.
     grouped = [
         (SRC_GATE, "Gate sign-offs", gate),
         (SRC_ARCH, "Architectural choices", arch),
         (SRC_SCOPE, "Scope decisions", scope),
-        (SRC_BRAIN, "Recorded decisions (git-brain)", brain),
     ]
     numbered = []
     n = 0
@@ -329,21 +260,19 @@ def render(audit, manifest, blueprint, config, requirements, brain_rows):
         "{0} decision(s)".format(len(arch)) if arch else "no blueprint style / migration mode found"))
     avail.append("Scope cuts (dropped requirements): **{0}**".format(
         "{0} dropped".format(len(scope)) if scope else "none dropped"))
-    avail.append("git-brain decisions: **{0}**".format(
-        "{0} recorded".format(len(brain)) if brain else "not provided"))
     for line in avail:
         md.append("- {0}".format(line))
     md.append("")
     if total == 0:
         md.append("_No decisions found in any source yet. This log is empty — it will "
-                  "populate as gates are signed off, the blueprint is produced, scope "
-                  "is cut, or decisions are recorded in git-brain._")
+                  "populate as gates are signed off, the blueprint is produced, and scope "
+                  "is cut._")
         md.append("")
         return "\n".join(md), 0
 
     missing = [name for name, lst in
                (("gate sign-offs", gate), ("architecture", arch),
-                ("scope cuts", scope), ("git-brain decisions", brain)) if not lst]
+                ("scope cuts", scope)) if not lst]
     if missing:
         md.append("_This log is **partial**: no {0} contributed. It reflects only the "
                   "sources present above._".format(", ".join(missing)))
@@ -386,9 +315,8 @@ def main():
     parser = argparse.ArgumentParser(
         prog="decisions_log",
         description="Render an ADR-style decisions log from gate sign-offs, the "
-                    "blueprint/config architecture, dropped-requirement scope cuts, "
-                    "and (optionally) git-brain decisions. Registers "
-                    "deliverable-decisions-log (status draft); never advances the phase.",
+                    "blueprint/config architecture, and dropped-requirement scope cuts. "
+                    "Registers deliverable-decisions-log (status draft); never advances the phase.",
     )
     parser.add_argument("--requirements", default=None,
                         help="Path to requirements_graph.json (default: the standard location)")
@@ -400,8 +328,6 @@ def main():
                         help="Path to audit.jsonl (default: the standard location)")
     parser.add_argument("--manifest", default=None,
                         help="Path to manifest.json (default: the standard location)")
-    parser.add_argument("--git-brain", default=None, dest="git_brain",
-                        help="Path to a JSON dump of git-brain decisions (optional; see SKILL.md)")
     parser.add_argument("--no-register", action="store_true",
                         help="Write the log but do not register it in the manifest")
     args = parser.parse_args()
@@ -412,9 +338,7 @@ def main():
     config = D.load_config(args.config) if args.config else D.load_config()
     audit = D.load_audit(args.audit) if args.audit else D.load_audit()
     manifest = D.load_manifest(args.manifest) if args.manifest else D.load_manifest()
-    brain_rows = _load_git_brain(args.git_brain)
-
-    markdown, count = render(audit, manifest, blueprint, config, requirements, brain_rows)
+    markdown, count = render(audit, manifest, blueprint, config, requirements)
 
     # Done-gate: the .md must be non-empty (it always is — header + sources at
     # minimum). Guard anyway so we never register an empty artifact.

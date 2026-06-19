@@ -1053,11 +1053,16 @@ class ValidatorRunner:
         elif self.stack in ["dotnet", "csharp"]:
             cmd = ["dotnet", "format", "--verify-no-changes"]
         else:
-            return {"status": "PASS", "command": "none", "exit_code": 0, "stdout": "", "stderr": ""}
+            # No silent-PASS for an unsupported stack — mirrors the compiler's B3 rule.
+            # Linting is advisory (WARNING, not FAIL) but a silent PASS hides that the
+            # check was skipped entirely.
+            return {"status": "WARNING", "command": "none", "exit_code": 0, "stdout": "",
+                    "stderr": f"Linting skipped: unsupported/unknown target_stack '{self.stack}'. "
+                              "Add a linter entry for this stack or set it as advisory."}
 
         tool_name = "go" if cmd[0] == "go" else cmd[0]
         tool_info = tool_results.get(tool_name, {"installed": shutil.which(tool_name) is not None, "required": False})
-        
+
         if not tool_info["installed"]:
             if tool_info["required"]:
                 return {"status": "FAIL", "command": " ".join(cmd), "exit_code": -1, "stdout": "", "stderr": f"Required linter '{tool_name}' not installed."}
@@ -1079,11 +1084,14 @@ class ValidatorRunner:
         elif self.stack in ["dotnet", "csharp"]:
             cmd = ["dotnet", "list", "package", "--vulnerable"]
         else:
-            return {"status": "PASS", "command": "none", "exit_code": 0, "stdout": "", "stderr": ""}
+            # No silent-PASS for an unsupported stack — mirrors the compiler's B3 rule.
+            return {"status": "WARNING", "command": "none", "exit_code": 0, "stdout": "",
+                    "stderr": f"Security scan skipped: unsupported/unknown target_stack '{self.stack}'. "
+                              "Add a scanner entry for this stack or accept that this check is not run."}
 
         tool_name = cmd[0]
         tool_info = tool_results.get(tool_name, {"installed": shutil.which(tool_name) is not None, "required": False})
-        
+
         if not tool_info["installed"]:
             if tool_info["required"]:
                 return {"status": "FAIL", "command": " ".join(cmd), "exit_code": -1, "stdout": "", "stderr": f"Required security scanner '{tool_name}' not installed."}

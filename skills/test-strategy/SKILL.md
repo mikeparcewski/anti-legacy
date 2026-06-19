@@ -4,7 +4,6 @@ description: >
   Generate a shift-left test strategy from the target blueprint. Produces one test
   contract per requirement node — inputs, assertions, boundary conditions, data parity
   verification rules (legacy output vs modern output), and integration test plans.
-  Queries git-brain for prior test patterns.
   Use when: "create a test strategy", "generate test contracts", "write the test plan",
   "what do we need to test", "parity testing approach".
 ---
@@ -45,23 +44,13 @@ Confirm `blueprint-json` is present and `final` or `draft`. If only `draft`,
 remind the user that test strategy can proceed but will need updating after
 GATE_1_DESIGN sign-off.
 
-## Step 2: Query git-brain for test patterns
-
-```bash
-python3 .anti-legacy/run.py git_brain search \
-  --query "modernization test strategy parity testing {source_language} {target_stack} contracts" \
-  --limit 5
-```
-
-Apply recalled patterns to the contract generation below.
-
-## Step 3: Read inputs
+## Step 2: Read inputs
 
 Read both:
 - `.anti-legacy/requirements/requirements_graph.json` (business rules, edge cases)
 - `.anti-legacy/requirements/blueprint.json` (API signatures, entity schemas)
 
-## Step 4: Generate test contracts per requirement node
+## Step 3: Generate test contracts per requirement node
 
 For each requirement node across all domains:
 
@@ -194,7 +183,7 @@ For requirement nodes with `dependencies`, write a cross-component integration
 scenario that exercises the full call chain. Write to
 `.anti-legacy/contracts/{domain}/{req_id}.integration.json`.
 
-## Step 5: Write the master test strategy document
+## Step 4: Write the master test strategy document
 
 Write `.anti-legacy/contracts/test-strategy.md`:
 
@@ -239,16 +228,7 @@ Post-build execution (target-review):
 `python3 .anti-legacy/run.py test_runner --workspace {target_path} --stack {target_stack} --report .anti-legacy/evidence/functional-test-report.json`
 ```
 
-## Step 6: Store strategy in git-brain
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Test strategy [{project_name}]: {scenario_count} scenarios across {req_count} requirements. Parity mode: {parity_mode}. Integration chains: {integration_count}. Key precision rules: {precision_rules}." \
-  --tags "pattern,test-strategy,{target_stack}" \
-  --category patterns
-```
-
-## Step 7: Done-gate, register artifacts, and advance phase
+## Step 5: Done-gate, register artifacts, and advance phase
 
 ### 7a. Content assertion (BLOCKING)
 
@@ -281,7 +261,7 @@ python3 .anti-legacy/run.py manifest register test-strategy \
 python3 .anti-legacy/run.py manifest advance test-strategy
 ```
 
-## Step 8: Adversarially self-review the test-strategy contract set (advisory — AGENTS.md §8)
+## Step 6: Adversarially self-review the test-strategy contract set (advisory — AGENTS.md §8)
 
 The Step 7a assertion only proves contracts exist and that no two share identical
 `inputs` — it cannot see a money/rate/count output that shipped with NO `parity_rules`
@@ -314,7 +294,6 @@ clears no gate and advances no phase.**
 - `.anti-legacy/contracts/{domain}/*.integration.json` — integration scenarios
 - `.anti-legacy/contracts/test-strategy.md` — master test strategy document
 - `.anti-legacy/evidence/functional-test-report.json` — programmatically run results from `test_runner.py`
-- git-brain: test patterns stored for reuse
 
 **Next step**: `anti-legacy:functional-tests` to author the executable acceptance
 tests from these contracts (pre-build, shift-left) and validate the contracts are

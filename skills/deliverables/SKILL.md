@@ -99,9 +99,7 @@ fast. Two deliverables benefit from agent reasoning on top of the deterministic 
 **PRD** (narrative framing of each requirement) and the **functional test scripts** (concrete
 assertions fleshed out from each contract scenario). When you want that, dispatch
 `anti-legacy:prd` and `anti-legacy:test-scripts` as subagents — they have no ordering
-dependency on each other, so run them **in parallel**. The `decisions-log` step also wants a
-git-brain dump first — see `anti-legacy:decisions-log` for the `git_brain list/read` step that
-feeds its `--git-brain` input.
+dependency on each other, so run them **in parallel**.
 
 ## Step 3: Compile the index
 

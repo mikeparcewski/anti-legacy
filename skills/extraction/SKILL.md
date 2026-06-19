@@ -211,24 +211,7 @@ the per-app DB list (cross-repo questions use the helper's `cross-graph`). If
 `stats` errors, the engine did not resolve or the repo was not indexed — fix
 `wicked_estate_path` / re-run survey; do NOT fall back to any other graph source.
 
-## Step 2: Query git-brain for extraction patterns
-
-```bash
-python3 .anti-legacy/run.py git_brain search \
-  --query "business rule extraction ring expansion crawl COBOL JCL CICS resolve risk patterns gotchas" \
-  --limit 5
-
-python3 .anti-legacy/run.py git_brain search \
-  --query "anti-pattern line-by-line translation over-annotation copybook leaf nodes" \
-  --category patterns \
-  --limit 3
-```
-
-Surface prior learnings (e.g. "MAIN-PARA names repeat — always key by SymbolId",
-"copybook-only modules carry no standalone rule"). Capture intent, not line-by-line
-logic: each rule is a language-agnostic statement of *what* the node does.
-
-## Step 3: Build the worklist (rank-ordered, resumable)
+## Step 2: Build the worklist (rank-ordered, resumable)
 
 `coverage.py` computes the denominator (behavior-bearing nodes) from the helper's
 node list and reports per-node state from the overlay. Run it once up front to get
@@ -263,7 +246,7 @@ Process unaccounted nodes in descending rank so high-leverage programs / entry
 points resolve first (this is the slice §I3 builds now). Apply `limit`/`app` here
 if set.
 
-## Step 4: Run the cluster-aware loop (or crawl by hand)
+## Step 3: Run the cluster-aware loop (or crawl by hand)
 
 **Model tier: strongest — see [AGENTS.md](../../AGENTS.md) §9 (model-tier routing).** The per-node
 `extract_rule` step (and any cross-source conflict it must arbitrate) is rule
@@ -456,7 +439,7 @@ The **verification spectrum** (`unverified` → `untrusted_verified` →
 rule statement. The spectrum and the promotion procedure are owned by
 `anti-legacy:vocabulary`.
 
-## Step 5: Write the annotation (helper does both writes atomically)
+## Step 4: Write the annotation (helper does both writes atomically)
 
 The helper's `annotate` is the single write path. It (a) shells `wicked-estate
 semantics <symbol_id> --requirement ... --description ... --validated ...` into the
@@ -609,16 +592,7 @@ python3 .anti-legacy/run.py wicked_estate --db <db> read-semantics '<full_symbol
 python3 .anti-legacy/run.py wicked_estate --db <db> by-requirement '<rule_id>'
 ```
 
-Store a learning per resolved cluster (optional but recommended):
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Rule for <node> (<file>): <statement> [conf <c>, ring <N>, prov <prov>]" \
-  --tags "discovery,business-rules,extraction" \
-  --category learnings
-```
-
-## Step 6: Re-run coverage and check the terminal
+## Step 5: Re-run coverage and check the terminal
 
 After the worklist is processed (or the session `limit` is hit), recompute coverage:
 
@@ -641,7 +615,7 @@ The report surfaces `resolved/total` (the auto-resolved slice §I3 can build now
 (`coverage == 1.0`). A node left UNACCOUNTED is a coverage hole — finish the crawl
 or RISK-flag it; never weaken the denominator or the threshold to force the gate.
 
-## Step 7: Register coverage evidence + refresh the digest, then advance
+## Step 6: Register coverage evidence + refresh the digest, then advance
 
 Only on a passing done-gate (coverage 1.0):
 

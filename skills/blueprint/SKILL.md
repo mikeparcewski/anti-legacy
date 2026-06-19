@@ -3,8 +3,7 @@ name: "anti-legacy:blueprint"
 description: >
   Map the Requirements Graph to a target state architecture blueprint. Defines the
   modern package structure, API surface (REST/gRPC), database schemas, class boundaries,
-  and repository patterns for the target stack. Queries git-brain for architecture
-  standards and prior blueprint patterns. Produces blueprint.json + blueprint.md.
+  and repository patterns for the target stack. Produces blueprint.json + blueprint.md.
   Use when: "design the target architecture", "create the blueprint", "map requirements to target stack",
   "design the Spring Boot structure", "what does the modern version look like".
 ---
@@ -40,21 +39,7 @@ python3 .anti-legacy/run.py manifest status
 Confirm `requirements-graph` artifact exists. If it still has `[TBD]` descriptions,
 halt and tell the user to complete `anti-legacy:graph-translator` enrichment first.
 
-## Step 2: Query git-brain for target stack patterns and anti-patterns
-
-```bash
-python3 .anti-legacy/run.py git_brain search \
-  --query "{target_stack} architecture patterns blueprint structure {style}" \
-  --limit 5
-
-# Query modernization anti-patterns to enforce constraints
-python3 .anti-legacy/run.py git_brain search \
-  --query "anti-pattern architecture modular monolith microservices line-by-line" \
-  --category patterns \
-  --limit 3
-```
-
-Also read any standards files in the patterns directory:
+## Step 2: Read patterns and verify architectural constraints
 
 Read `.anti-legacy/patterns/{source_lang}-to-{target_stack}/index.md` for each source language.
 
@@ -224,16 +209,7 @@ Write `.anti-legacy/requirements/blueprint.md` with:
 
 Read `skills/blueprint/references/nfrs.md`, customize it by replacing `{project_name}`, `{target_stack}`, and `{deployment_target}` with details from `config.json`, and save the result as `.anti-legacy/requirements/nfrs.md`.
 
-## Step 7: Store blueprint decisions in git-brain
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Blueprint [{project_name}] → {target_stack} {style}: {domain_count} domains, {component_count} components, {entity_count} entities, {api_count} API endpoints. Package root: {package_root}. Build order: {first_5_tasks}..." \
-  --tags "decision,blueprint,{target_stack}" \
-  --category decisions
-```
-
-## Step 8: Done-gate, register artifacts, and advance phase
+## Step 7: Done-gate, register artifacts, and advance phase
 
 ### 8a. Content assertion (DONE-GATE)
 
@@ -283,7 +259,7 @@ python3 .anti-legacy/run.py manifest register nfrs \
 python3 .anti-legacy/run.py manifest advance blueprint
 ```
 
-## Step 9: Adversarially self-review the blueprint (advisory — AGENTS.md §8)
+## Step 8: Adversarially self-review the blueprint (advisory — AGENTS.md §8)
 
 The Step 8a assertion only proves the blueprint has a domain with components and a
 non-empty NFRs doc — it cannot see a requirement mapped to the wrong component_type, a
@@ -311,6 +287,5 @@ re-reviewing, capped at §7's three attempts (then recon), or proceed under a **
 - `.anti-legacy/requirements/blueprint.md` — human-readable blueprint for review
 - `.anti-legacy/requirements/nfrs.md` — target Non-Functional Requirements spec
 - Manifest: phase = `blueprint`, artifacts `blueprint-json`, `blueprint-md`, and `nfrs` registered
-- git-brain: blueprint decisions stored
 
 **Next step**: `anti-legacy:test-strategy` to generate test contracts from the blueprint, then `anti-legacy:review-packet` to compile the team review package.

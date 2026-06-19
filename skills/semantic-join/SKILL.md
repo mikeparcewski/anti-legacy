@@ -98,11 +98,10 @@ python3 .anti-legacy/run.py manifest gate GATE_1B_SEMANTIC_JOIN \
   --evidence "semantic-join-report"
 ```
 
-## Step 5: Advance Phase & Learn
+## Step 5: Advance Phase
 
 Only after the done-gate passed and the gate is recorded:
 
 ```bash
 python3 .anti-legacy/run.py manifest advance semantic-join
-python3 .anti-legacy/run.py learn_coordinator --phase "semantic-join"
 ```

@@ -86,13 +86,6 @@ not the subagent — the subagent gets the extracted rules, not the raw legacy c
 Read `.anti-legacy/patterns/{source_lang}-to-{target_stack}/index.md` and
 any matching pattern files for this task's categories.
 
-Also query git-brain:
-```bash
-python3 .anti-legacy/run.py git_brain search \
-  --query "translation pattern {source_lang} {target_stack} {req_id} {entity_names}" \
-  --limit 5
-```
-
 **3e. The test contract**
 
 Read `.anti-legacy/contracts/{domain}/{req_id}.contract.json` for the expected
@@ -272,17 +265,7 @@ After the subagent completes:
 
 In `task.md`, change `- [ ]` to `- [x]` for the completed task.
 
-If a non-obvious translation was used (e.g. COMP-3 → BigDecimal with specific scale),
-store it as a git-brain memory:
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Translation [{task_id}]: {source_lang} {construct} maps to {target_lang} {pattern}. Example: {example}. Rationale: {rationale}." \
-  --tags "pattern,{source_lang},{target_stack},{construct_type}" \
-  --category patterns
-```
-
-Also append the learning to the patterns index:
+Append non-obvious translation patterns to the patterns index:
 
 ```bash
 python3 .anti-legacy/run.py manifest learn "{task_id}-pattern" \
@@ -295,12 +278,7 @@ python3 .anti-legacy/run.py manifest learn "{task_id}-pattern" \
 Ask: "Continue with the next task?" and repeat from Step 2. When all tasks
 in all layers are complete:
 
-1. Run the learn coordinator:
-   ```bash
-   python3 .anti-legacy/run.py learn_coordinator --phase "swarm"
-   ```
-
-2. **DONE-GATE before advancing the phase.** The swarm only advances the
+1. **DONE-GATE before advancing the phase.** The swarm only advances the
    pipeline from `planning` to `build` when the build is genuinely complete.
    Run a content assertion that proves EVERY task is ticked AND no task file
    still carries a stub marker (the Step 5 stub-detection signal). This is
@@ -330,7 +308,7 @@ in all layers are complete:
      python3 .anti-legacy/run.py manifest advance build
      ```
 
-3. Report:
+2. Report:
 - Total tasks completed
 - Tasks with correction loops (quality signal)
 - Suggest running `anti-legacy:target-review` to compile the full target codebase
@@ -347,7 +325,6 @@ in all layers are complete:
 - Target code files in `{target_path}/...`
 - Unit test files alongside target code
 - `.anti-legacy/task.md` updated with completion checkboxes
-- Git-brain: translation learnings stored per task
 - Patterns library: new patterns indexed per task
 
 **Next step** (after all tasks): `anti-legacy:target-review` to compile and verify the full codebase.

@@ -1,31 +1,19 @@
 ---
 name: "anti-legacy:develop-plugin"
 description: >
-  Guide the agent to update, patch, or expand the anti-legacy plugin itself
-  based on recent episodic learnings, translation bugs, or semantic gaps recorded in the git-brain.
+  Guide the agent in modifying the plugin's code, templates, or skills to address
+  learnings and gaps found in UAT/semantic validation.
   Use when: "update the plugin", "fix parsing bug", "modify translation rule",
   "develop the plugin", "self-correct code translator based on learning".
 ---
 
 # anti-legacy:develop-plugin
 
-This skill enables the anti-legacy modernization pipeline to be self-correcting and adaptive. When validator subagents or UAT reviews identify gaps, they store them as memories in the git-brain. This skill guides the agent in modifying the plugin's code, templates, or skills to address those learnings.
+This skill guides the agent in modifying the anti-legacy plugin itself — its code, templates, and skills — to address learnings and gaps surfaced in UAT verdicts, semantic validation findings, or production modernization runs.
 
 ## Workflow
 
-### Step 1: Retrieve recent learnings and gaps
-
-Query the git-brain to fetch learnings, decisions, and patterns:
-
-```bash
-python3 .anti-legacy/run.py git_brain search \
-  --query "failure gap semantic-gap error bug translation" \
-  --limit 10
-```
-
-Read the specific memory file using `python3 .anti-legacy/run.py git_brain read`.
-
-### Step 2: Map the learning to the plugin component
+### Step 1: Map the learning to the plugin component
 
 Identify which plugin component requires modification:
 
@@ -89,5 +77,5 @@ Commit the fix to the git repository:
 
 ```bash
 git add scripts/ skills/ templates/ tests/
-git commit -m "plugin: fixed {bug_desc} based on git-brain learning {learning_id}"
+git commit -m "plugin: fixed {bug_desc} based on {finding_source} finding {finding_id}"
 ```

@@ -110,21 +110,7 @@ python3 .anti-legacy/run.py wicked_estate resolve_binary
 
 ---
 
-## Step 2: Query git-brain for prior survey learnings
-
-```bash
-python3 .anti-legacy/run.py git_brain search \
-  --query "legacy survey wicked-estate index graph mainframe modern" \
-  --limit 3
-```
-
-Surface any prior learnings — e.g. "this codebase's COPY REPLACING expands at index
-time", "JCL PROC step calls a COBOL program cross-language", "this repo uses
-Hibernate 3.x not Spring Data", "index took N minutes on M files".
-
----
-
-## Step 3: Index each source app with wicked-estate
+## Step 2: Index each source app with wicked-estate
 
 For **every** source app in `config.json` (no language routing — wicked-estate handles
 the mainframe estate and modern languages in one pass), index the repo into its own
@@ -211,7 +197,7 @@ glossary is the durable record; these graph tags are a disposable re-derived pro
 
 ---
 
-## Step 4: Summarise and surface key findings
+## Step 3: Summarise and surface key findings
 
 Read each app's graph stats via the helper (no JSON file to parse — the stats come
 straight off the DB):
@@ -266,18 +252,7 @@ disposition for every uncalled entry point — before proceeding to the analyze 
 
 ---
 
-## Step 5: Store findings in git-brain
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Survey [{project_name}]: indexed {app_count} apps with wicked-estate — {total_nodes} nodes, {total_edges} edges, {behavior_bearing} behavior-bearing. Languages: {detected_languages}. Shared assets: {top_shared_assets}." \
-  --tags "discovery,survey,wicked-estate,{detected_languages}" \
-  --category learnings
-```
-
----
-
-## Step 6: Register the digest as evidence and advance phase
+## Step 4: Register the digest as evidence and advance phase
 
 **Done-gate — assert the graph is real before registering.** The gate is now
 **stats-based** (not a per-node `file_path` check, since wicked-estate carries
@@ -332,7 +307,6 @@ gated in a later workflow).
   (the committed thin-seam evidence).
 - Manifest: phase = `survey`, artifact `legacy-graph` registered (`format=text`,
   produced-by `anti-legacy:survey`, status `final`).
-- git-brain: discovery memory stored.
 
 **Next step**: `anti-legacy:analyze` to apply structural lenses by querying
 wicked-estate (entry points via `rank`/`blast-radius`/`query`, shared-asset coupling

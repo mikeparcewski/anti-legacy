@@ -25,7 +25,7 @@ the suite's import bootstrap (adding every `skills/*/scripts` dir to `sys.path` 
 - modules that import a leaf script (`from test_runner import TestRunner`,
   `from completeness_scanner import ...`) fail to import → `_FailedTest` collection
   errors, and whole modules are silently dropped from the run;
-- subprocess CLI tests that spawn `python -m antilegacy_core.<stem>` / `-m git_brain`
+- subprocess CLI tests that spawn `python -m antilegacy_core.<stem>`
   / `-m packet_generator` fail with `ModuleNotFoundError` because the child never
   inherits the conftest-exported `PYTHONPATH`.
 

@@ -13,8 +13,8 @@ description: >
 
 # anti-legacy:skill-forge
 
-The pipeline already *designs* the target (`blueprint.json`) and *learns* patterns/decisions
-(git-brain). But building the target has been a per-task micro-context assembly inside `swarm`
+The pipeline already *designs* the target (`blueprint.json`) and records patterns/decisions.
+But building the target has been a per-task micro-context assembly inside `swarm`
 each run — it isn't a first-class thing a CLI/IDE agent just *does*. `skill-forge` closes that:
 it turns the target design into **target-tailored build skills the agent invokes by name**.
 
@@ -22,7 +22,7 @@ It is the target-system analog of `anti-legacy:develop-plugin`: develop-plugin e
 plugin* from learnings; skill-forge **generates skills for the target system**. The product is
 `SKILL.md` files (instructions the agent follows), not scripts — because building is an agent
 task. They are deterministic projections of the design (no LLM), regenerated whenever the
-blueprint changes, and they cite git-brain patterns so they sharpen as the brain learns.
+blueprint changes.
 
 ## Cross-Platform Notes
 
@@ -50,7 +50,6 @@ self-contained build contract for that capability — plus a `README.md` index. 
 skill contains:
 - **Target** (stack, package, style) + **conventions** (idiomatic code, `@ImplementsRule` on every
   rule, rule-coverage 1.0, no stubs, numeric-precision parity).
-- A **git-brain patterns** step (query the brain for this stack's translation recipes first).
 - A dependency-sorted **build order**.
 - Per component: the blueprint spec (class/type/target_file/api/methods/deps) + the requirement's
   **business rules** (with their `RULE-`/`VAL-`/`ERR-` ids to annotate), the **legacy provenance**
@@ -88,14 +87,6 @@ than inventing behavior; they need extraction/human review, not a guess).
 - `.anti-legacy/generated-skills/build-<domain>/SKILL.md` — one target-tailored build skill per
   domain (agent-followed).
 - `.anti-legacy/generated-skills/README.md` — the index.
-
-## The memory loop (why this compounds)
-
-Generated skills cite the git-brain patterns they were built from; as `swarm`/`developer` record
-new translation patterns (and decisions/learnings) back to git-brain, a re-forge produces sharper
-build skills. Design (blueprint) + memory (git-brain) → generated build skills → agent builds →
-memory. `skill-forge` is the step that makes the learned target-state design *actionable* as
-agent-native skills.
 
 ## Don'ts (AGENTS.md)
 

@@ -297,16 +297,7 @@ git add .anti-legacy/
 git commit -m "gate: GATE_4_UAT cleared by {uat-lead-name}"
 ```
 
-## Step 8: Store UAT results in git-brain
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "UAT [{project_name}]: {passed}/{total} requirements passed. {critical} critical findings. Overall: {verdict}. Key failures: {top_findings}." \
-  --tags "discovery,uat,{project_name}" \
-  --category learnings
-```
-
-## Step 9: Done-gate, then advance phase
+## Step 8: Done-gate, then advance phase
 
 **Done-gate (content assertion).** Before registering/advancing, prove the UAT
 run is real and clean. Assert that EVERY active requirement has a verdict file,
@@ -366,7 +357,6 @@ Only when the done-gate passes, advance:
 
 ```bash
 python3 .anti-legacy/run.py manifest advance uat
-python3 .anti-legacy/run.py learn_coordinator --phase uat
 ```
 
 ## Output
@@ -375,7 +365,6 @@ python3 .anti-legacy/run.py learn_coordinator --phase uat
 - `.anti-legacy/evidence/uat-verdicts.json` — aggregated verdicts file (registered artifact id `uat-verdicts`)
 - `.anti-legacy/evidence/uat-summary.md` — human-readable UAT summary (registered artifact id `uat-summary`)
 - Manifest: artifacts `uat-summary` and `uat-verdicts` registered (status `final`); GATE_4_UAT evidence
-- Git-brain: UAT findings stored
 
 **Next step**: If GATE_4_UAT cleared → `anti-legacy:deploy` to package and deploy the modernized application.
 If GATE_4_UAT failed → `anti-legacy:swarm` to fix failing requirements, then re-run.

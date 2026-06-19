@@ -231,22 +231,12 @@ python3 .anti-legacy/run.py manifest gate GATE_5_COMPLETENESS \
 git add .anti-legacy/ && git commit -m "gate: GATE_5_COMPLETENESS cleared by anti-legacy:final-review"
 ```
 
-Store the result in git-brain so future runs learn the patterns that recur:
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Final completeness review [{project_name}]: PASS. Zero HIGH stubs/mocks/skips across CODE/DOCS/CONFIG/BUILD." \
-  --tags "final-review,completeness,{target_stack}" \
-  --category learnings
-```
-
 ## Step 6: Advance
 
 Only after GATE_5_COMPLETENESS is `passed`/`waived`:
 
 ```bash
 python3 .anti-legacy/run.py manifest advance final-review
-python3 .anti-legacy/run.py learn_coordinator --phase final-review
 ```
 
 ## Done-gate (BLOCKING)

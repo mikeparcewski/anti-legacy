@@ -40,21 +40,13 @@ print('GATE_1_DESIGN: cleared ✓')
 
 Halt if GATE_1_DESIGN is not `passed`.
 
-## Step 2: Query git-brain for planning patterns
-
-```bash
-python3 .anti-legacy/run.py git_brain search \
-  --query "task decomposition planning {target_stack} build order dependency" \
-  --limit 5
-```
-
-## Step 3: Read blueprint and requirements
+## Step 2: Read blueprint and requirements
 
 Read:
 - `.anti-legacy/requirements/blueprint.json` — components, build order, dependencies
 - `.anti-legacy/requirements/requirements_graph.json` — business rules per node
 
-## Step 4: Topological sort of tasks
+## Step 3: Topological sort of tasks
 
 Compute the build order respecting inter-requirement dependencies. The ordering follows the `traversal_strategy` (bottom-up, top-down, vertical-slice) defined in `.anti-legacy/config.json` (defaults to `bottom-up`).
 
@@ -89,7 +81,7 @@ for i, req_id in enumerate(order, 1):
 "
 ```
 
-## Step 5: Estimate task scope and split if needed
+## Step 4: Estimate task scope and split if needed
 
 For each requirement node in build order, estimate line count AND an hours figure
 (the task.md contract records **hours**, not lines — see Step 7). Rough mapping:
@@ -105,7 +97,7 @@ No task may exceed **8h** (GATE_2 checklist rejects any estimate > 8h). If a ser
 - `{req_id}-validation`: input validation rules
 - `{req_id}-error-paths`: error handling and rollback
 
-## Step 6: Assign task layers
+## Step 5: Assign task layers
 
 Group tasks into four build layers:
 
@@ -114,7 +106,7 @@ Group tasks into four build layers:
 3. **Layer 2 — Services**: business logic components (depends on Layer 1)
 4. **Layer 3 — API / Entry points**: controllers, batch runners, listeners (depends on Layer 2)
 
-## Step 7: Write task.md
+## Step 6: Write task.md
 
 Each checkbox is **one line** in the contract format, then optional sub-bullets for
 the build metadata the swarm needs:
@@ -194,7 +186,7 @@ Each task is DONE when:
 4. Task checkbox is ticked in this file and committed to git
 ```
 
-## Step 8: Done-gate, register artifact, and advance to GATE_2
+## Step 7: Done-gate, register artifact, and advance to GATE_2
 
 **Done-gate (BLOCKING).** Before registering or advancing, assert the planner's own
 contract. All three checks must pass; if any fails, do NOT run `register --status draft`
@@ -282,7 +274,6 @@ python3 .anti-legacy/run.py manifest register task-plan \
   --depends-on blueprint-json
 
 python3 .anti-legacy/run.py manifest advance planning
-python3 .anti-legacy/run.py learn_coordinator --phase "planner"
 ```
 
 Tell the user:
@@ -292,7 +283,7 @@ Tell the user:
   `python3 .anti-legacy/run.py manifest gate GATE_2_PLAN --opinion passed --evaluator "<reviewer>" --rationale "<note>" --evidence task-plan`
   (the `task-plan` artifact is the GATE_2_PLAN evidence), then run `anti-legacy:swarm`
 
-## Step 9: Adversarially self-review the task plan (advisory — AGENTS.md §8)
+## Step 8: Adversarially self-review the task plan (advisory — AGENTS.md §8)
 
 The Step 8 done-gate is mechanical — it counts tasks against active requirements,
 checks every task carries hours, and verifies no dependency points at a later layer. It

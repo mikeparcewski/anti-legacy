@@ -222,15 +222,6 @@ python3 .anti-legacy/run.py manifest gate GATE_3_BUILD \
   --evidence "build-integrity,code-quality,security-scan,functional-comparison-report,functional-test-report"
 ```
 
-Store result in git-brain:
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Build, quality, security, and round-trip rule-coverage validation result [{project_name}]: PASSED. Target stack: {target_stack}." \
-  --tags "discovery,build,validation,{target_stack}" \
-  --category learnings
-```
-
 ## Step 6: Register artifacts and advance phase
 
 Only reach this step if the Step 5 done-gate passed (build-integrity PASS AND
@@ -256,7 +247,6 @@ python3 .anti-legacy/run.py manifest register security-scan \
   --status {status}
 
 python3 .anti-legacy/run.py manifest advance target-review
-python3 .anti-legacy/run.py learn_coordinator --phase target-review
 ```
 
 ## Deliverable: `evidence/build-integrity.json` schema

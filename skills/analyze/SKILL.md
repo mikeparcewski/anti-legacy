@@ -4,8 +4,7 @@ description: >
   Apply structural lenses to the legacy code graph to identify entry points, domain
   boundaries, shared data coupling, operational modes (batch vs online), and risk
   hotspots. Queries the wicked-estate code graph via the helper (never raw SQLite,
-  never legacy_graph.json). Produces an analysis report and seeds git-brain with
-  domain discoveries.
+  never legacy_graph.json). Produces an analysis report.
   Use when: "analyze the legacy code", "identify entry points", "find domain boundaries",
   "what are the hotspots", "classify the programs".
 ---
@@ -79,17 +78,7 @@ print('OK: per-app wicked-estate DBs present')
 
 If DBs are missing, halt and instruct the user to re-run `anti-legacy:survey`.
 
-## Step 2: Query git-brain for prior analysis patterns
-
-```bash
-python3 .anti-legacy/run.py git_brain search \
-  --query "legacy analysis entry points domain boundaries batch online" \
-  --limit 5
-```
-
-Apply any recalled patterns to the analysis steps below.
-
-## Step 3: Rank importance and identify entry points (per app)
+## Step 2: Rank importance and identify entry points (per app)
 
 Do **not** hand-roll an in/out-degree pass over a JSON blob. The wicked-estate
 graph already carries importance (PageRank) and full cross-domain edges. For each
@@ -139,7 +128,7 @@ nevertheless JCL/CICS targets — those are always in-scope entry points.
 Record, per app: the ranked importance list (top N), the entry-point set, and each
 entry point's immediate downstream (from `query`).
 
-## Step 4: Apply the four lenses (helper-driven)
+## Step 3: Apply the four lenses (helper-driven)
 
 Work through each lens, sourcing every fact from the helper — `rank`, `query`,
 `blast_radius`, `source`, and `cross_graph` for cross-repo questions.
@@ -222,7 +211,7 @@ units:
 - **Config dependencies:** datasets, MQ queues, db2_table nodes referenced across
   the estate (estate `uses`/`accesses` edges via `blast_radius`).
 
-## Step 5: Write analysis report
+## Step 4: Write analysis report
 
 Write `.anti-legacy/analysis-report.md` with findings from all four lenses:
 
@@ -240,18 +229,7 @@ Write `.anti-legacy/analysis-report.md` with findings from all four lenses:
 Every claim in the report must trace to a helper call (`rank` / `query` /
 `blast_radius` / `cross_graph`) — do not invent structure the graph did not return.
 
-## Step 6: Store domain discoveries in git-brain
-
-For each identified domain, store a memory:
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Domain analysis [{project_name}]: Identified domains: {domain_list}. Entry points: {entry_points}. Shared data assets (coupling risk): {shared_assets}. Batch vs online split: {batch_count} batch, {online_count} online programs." \
-  --tags "discovery,analysis,domains" \
-  --category learnings
-```
-
-## Step 7: Done-gate, register artifact, and advance phase
+## Step 5: Done-gate, register artifact, and advance phase
 
 First run the content assertion. This proves the artifact is real before any
 register/advance happens. The assertion verifies: `analysis-report.md` exists,
@@ -333,7 +311,6 @@ python3 .anti-legacy/run.py manifest advance analyze
 - `.anti-legacy/analysis-report.md` — four-lens analysis with domain assignments,
   every claim traced to a `wicked_estate` helper query
 - Manifest: phase = `analyze`, artifact `analysis-report` registered
-- git-brain: domain discovery memory stored
 
 **Next step**: `anti-legacy:extraction` — crawl the wicked-estate graph via
 adaptive ring-expansion, annotate each behavior-bearing node (resolve-or-risk), and

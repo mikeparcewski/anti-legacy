@@ -189,7 +189,7 @@ class TestEndToEndPipeline(unittest.TestCase):
         # Create temp workspace
         cls.workspace = tempfile.mkdtemp(prefix="anti-legacy-demo-")
 
-        # Init a git repo (required for git-brain)
+        # Init a git repo (required for manifest git operations)
         cls._git("init")
         cls._git("config", "user.email", "demo@test.com")
         cls._git("config", "user.name", "Demo")

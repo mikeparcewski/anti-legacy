@@ -254,6 +254,27 @@ gap (annotate, represent, or explicitly drop with a reason); do NOT advance.
 
 ---
 
+## PEP done-gate (AGENTS.md §10 — Full PEP)
+
+Before declaring done, run all six steps:
+
+**Step 3 — Antagonist (pre-build, before the producer runs)**
+```bash
+python3 .anti-legacy/run.py antagonist context --phase graph-translate
+# Paste the output as context, then dispatch anti-legacy:antagonist.
+# CRITICAL threats block — fix the plan or waive explicitly before proceeding.
+```
+
+**Steps 2 & 4 — Adversarial review + resolve loop (after the producer runs)**
+```bash
+python3 .anti-legacy/run.py refine_loop descriptor --artifact requirements-graph
+# Dispatch anti-legacy:adversarial-review against the rendered output.
+# Then: python3 .anti-legacy/run.py refine_loop decide --verdict <PASS|REVISE|BLOCK> --attempt <n>
+# exit 0 = stop · exit 3 = refine (re-run producer) · exit 4 = cap reached → recon (§7)
+```
+
+---
+
 ## Adversarially self-review the requirements graph (advisory — AGENTS.md §8)
 
 The builder's own assertions (round-trip == 1.0, zero schema errors) are mechanical;
@@ -261,22 +282,12 @@ they cannot see a domain that laundered a file 1:1 partition into "capabilities"
 RESOLVED rule whose statement drifted from its source, or a disposition reason that
 does not justify the drop. Before you report done, adversarially review the
 `requirements_graph.json` you just produced — the round-trip is trusting; this is the
-loop that distrusts it. Resolve the single-artifact critic target, then dispatch the
-read-only critic against it:
+loop that distrusts it.
 
-```bash
-python3 .anti-legacy/run.py refine_loop descriptor --artifact requirements-graph --json
-```
-
-That resolves the rendered file + the source data the critic must cross-check (the
-requirements-graph §2 spine + this artifact's manifest `depends_on` — the annotated
-graph + coverage). Dispatch `anti-legacy:adversarial-review` (single-artifact mode)
-against the descriptor. On `REVISE`/`BLOCK`, run the bounded loop —
-`refine_loop decide --verdict <v> --attempt <n> --artifact requirements-graph` —
-re-running `anti-legacy:graph-translator` to fix at source and re-reviewing, capped at
-§7's three attempts (then recon), or proceed under a **stated** `--forced` override.
-**Advisory: it clears no gate (GATE_1_DESIGN is still a human sign-off) and advances
-no phase.**
+Run the commands from the **PEP done-gate — Steps 2 & 4** section above (steps 2 and 4
+of the Phase Execution Protocol). That section resolves the single-artifact critic target
+(`requirements-graph`) and runs the bounded refine loop. **Advisory: it clears no gate
+(GATE_1_DESIGN is still a human sign-off) and advances no phase.**
 
 ---
 

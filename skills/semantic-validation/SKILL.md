@@ -172,7 +172,6 @@ enum value; only run this once the Step 5 done-gate assertion has passed):
 
 ```bash
 python3 .anti-legacy/run.py manifest advance semantic-validation
-python3 .anti-legacy/run.py learn_coordinator --phase semantic-validation
 ```
 
 Before prompting the Tech Lead to sign off, check there are no **unresolved HIGH/CRITICAL**

@@ -10,8 +10,7 @@ micro-context from scratch each time.
 
 The generated artifacts are SKILL.md (instructions the agent reads), NOT scripts: building the
 target is an agent task, so the forge's product is agent-followable skills. They are regenerated
-(idempotent) whenever the blueprint changes, and they cite git-brain patterns so they improve as
-the brain learns.
+(idempotent) whenever the blueprint changes.
 
 Deterministic: pure projection of blueprint.json + requirements_graph.json + config.json (no LLM).
 Reuses antilegacy_core.deliverables loaders (cwd-anchored). Cross-platform stdlib + os.path.
@@ -167,14 +166,11 @@ def _render_build_skill(project, stack, style, domain, domain_bp, reqs_by_id, bl
         "- **Package/module:** `%s`" % (pkg or "(see blueprint)"),
         "",
         "## Conventions (read before writing code)",
-        "1. Query the brain for this stack's patterns first:"
-        " `python3 .anti-legacy/run.py git_brain search --query \"%s %s patterns\" --category patterns`"
-        % (stack, style or ""),
-        "2. Idiomatic %s — NO legacy constructs carried over." % stack,
-        "3. Annotate every business rule / validation / error path with `@ImplementsRule(\"<id>\")`"
+        "1. Idiomatic %s — NO legacy constructs carried over." % stack,
+        "2. Annotate every business rule / validation / error path with `@ImplementsRule(\"<id>\")`"
         " (or your stack's equivalent) — round-trip rule coverage must reach 1.0.",
-        "4. No stubs / single-return placeholders; real logic only.",
-        "5. Preserve numeric precision on money/rate/percent/count (see the data model).",
+        "3. No stubs / single-return placeholders; real logic only.",
+        "4. Preserve numeric precision on money/rate/percent/count (see the data model).",
         "",
         "## Build order (dependency-sorted)",
     ]

@@ -83,9 +83,18 @@ fix the contracts (`anti-legacy:test-strategy`) and re-run.
 python3 .anti-legacy/run.py functional_tests author \
   --contracts .anti-legacy/contracts \
   --stack {target_stack} \
-  --output {target_path}/src/test/java/acceptance \
+  --output {target_stack_test_path} \
   --report .anti-legacy/evidence/functional-authoring-report.json
 ```
+
+Where `{target_stack_test_path}` is stack-dependent:
+
+| Stack | `--output` value |
+|---|---|
+| java / maven | `{target_path}/src/test/java/acceptance` |
+| python | `{target_path}/tests/acceptance` |
+| go | `{target_path}/acceptance_test` |
+| dotnet / csharp | `{target_path}/tests/Acceptance` |
 
 Per stack:
 
@@ -94,14 +103,32 @@ Per stack:
   the named `target_component` (class + method) exists on the built classpath —
   the smallest provable claim the swarm produced the symbol. The post-build
   runner fills in the live input/output comparison.
-- **python** → one pytest module per contract; for a Python target point
-  `--output` at the target's test directory (e.g. `{target_path}/tests/acceptance`).
+- **python** → one pytest module per contract.
 - **any other stack** → the command returns a clear "stack not yet supported"
   error and exits non-zero. It does NOT author a silent empty pass.
 
 The authoring is also gated: if ANY contract fails validation, NO test files are
 written and the command exits non-zero (the hard gate from Step 2 is re-asserted
 inside `author`, so the two are never out of sync).
+
+## PEP done-gate (AGENTS.md §10 — Full PEP)
+
+Before declaring done, run all six steps:
+
+**Step 3 — Antagonist (pre-build, before the producer runs)**
+```bash
+python3 .anti-legacy/run.py antagonist context --phase functional-tests
+# Paste the output as context, then dispatch anti-legacy:antagonist.
+# CRITICAL threats block — fix the plan or waive explicitly before proceeding.
+```
+
+**Steps 2 & 4 — Adversarial review + resolve loop (after the producer runs)**
+```bash
+python3 .anti-legacy/run.py refine_loop descriptor --artifact functional-authoring-report
+# Dispatch anti-legacy:adversarial-review against the rendered output.
+# Then: python3 .anti-legacy/run.py refine_loop decide --verdict <PASS|REVISE|BLOCK> --attempt <n>
+# exit 0 = stop · exit 3 = refine (re-run producer) · exit 4 = cap reached → recon (§7)
+```
 
 ## Step 4: Done-gate
 

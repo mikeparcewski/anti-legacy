@@ -509,16 +509,7 @@ git add .anti-legacy/manifest.json .anti-legacy/audit.jsonl .anti-legacy/audit_r
 git commit -m "gate: {gate_id} cleared by {evaluator}"
 ```
 
-## Gate cleared — store decision and advance
-
-After any gate clears, store the decision in git-brain:
-
-```bash
-python3 .anti-legacy/run.py git_brain store \
-  --content "Gate {gate_id} cleared for project {project_name} by {evaluator}. Rationale: {rationale}. Evidence: {evidence_ids}." \
-  --tags "decision,gate,{gate_id}" \
-  --category decisions
-```
+## Gate cleared — next phase
 
 Report to the user what phase comes next after the cleared gate:
 
