@@ -102,6 +102,8 @@ Survey → topology (`wicked-estate index`), not reading source for rules. Extra
 ### §2 — The traceability thread never breaks
 wicked-estate node (native `file`/`line` provenance) → its `requirement` annotation + `annotations.jsonl` overlay row (keyed `{db_id, symbol_id}`, carrying `provenance` = the ring nodes/edges that grounded the rule) → `legacy_components` → `task.md` task → `req_id` → `uat verdict`. The annotation is SymbolId-keyed because names are not unique (carddemo `MAIN-PARA`×21) — the helper resolves name→SymbolId before every write, so the link binds the exact scoped node. A broken link means a swarm agent cannot trace back to source; fix it before advancing.
 
+**Epistemic limit: the thread enforces structural completeness, not semantic correctness.** A rule that is *wrong* — misread from the legacy source — can pass every machine check (numeric confidence, non-null `legacy_components`, intact `symbol_id` binding, coverage ≥ 1.0) and reach the build phase unchallenged. Human gate reviewers (GATE_1_DESIGN) verify that the trace is structurally intact; they do not re-read the legacy source to verify that the rule *means* what the code does. Name this limit explicitly in risk assessments: the pipeline's correctness guarantee is *"if the extraction agent read the source slice correctly, the downstream build and UAT faithfully reflect that reading."* The question "did the extraction agent understand the COBOL correctly?" cannot be machine-verified.
+
 ### §3 — One engine indexes the whole estate
 `wicked-estate index` captures the mainframe estate (COBOL/JCL/CICS/IMS/DB2 — module/function/field, JCL step/dataset, cics_program/cics_map, ims_database/segment, db2_table) AND modern languages (Java, C#, Go, Python, TypeScript, Rust, …) in one pass, resolving cross-language edges automatically (JCL `EXEC PGM` → COBOL, `CALL` → COBOL). No language-routing split, no batch Python extractor. Do not add Python parsers — parsing is a wicked-estate concern. There is no separate modern survey track: `survey-modern` is **retired** — a do-nothing redirect stub kept only so stale references resolve; modern source is indexed by `anti-legacy:survey` like everything else.
 
@@ -197,6 +199,8 @@ The step numbers reflect logical groupings, not alphabetical order: step 3 (anta
 
 ## Skill Dispatch
 
+> **Use `anti-legacy:orchestrate` for the full pipeline.** Direct skill invocation bypasses gate preconditions and manifest state checks — invoke skills directly only for single-phase re-runs after a gate kick-back, or when `manifest advance` has already confirmed the prerequisite phases are complete.
+
 | Situation | Skill |
 |---|---|
 | One-command full conversion (formulate DoD → approve → drive the whole pipeline) | `anti-legacy:convert` |
@@ -211,17 +215,11 @@ The step numbers reflect logical groupings, not alphabetical order: step 3 (anta
 | Writing test contracts per requirement | `anti-legacy:test-strategy` |
 | Compiling team review document | `anti-legacy:review-packet` |
 | Producing the stakeholder deliverables package (graph ready → PRD, diagrams, test strategy + scripts, migration plan, risk/decisions/evidence logs) | `anti-legacy:deliverables` |
+| Detailed product requirements (PRD) — agent-enriched narrative framing (subagent of deliverables) | `anti-legacy:prd` |
+| Functional test scripts (data-parity / UAT / E2E / API) — agent-enriched assertions (subagent of deliverables) | `anti-legacy:test-scripts` |
 | Adversarial review of ANY generated output — individually or batch (read-only critic vs its source data → PASS/REVISE/BLOCK; advisory, not a gate; the pre-build analog of `anti-legacy:uat-reviewer`) | `anti-legacy:adversarial-review` |
 | Pre-build threat modeling — attacks a phase PLAN before the producer runs (PEP §10 step 3); generates a structured threat list; CRITICAL threats block; MEDIUM/MINOR advisory. Distinct from adversarial-review (which reviews output AFTER production) | `anti-legacy:antagonist` |
 | Validating requirements graph legacy fields against actual source programs — JCL-to-COBOL resolution, missing-program gaps, content spot-checks; run after extraction/graph-translate, before blueprint | `anti-legacy:graph-validator` |
-| Detailed product requirements (PRD) | `anti-legacy:prd` |
-| Architecture diagrams (Mermaid) | `anti-legacy:diagrams` |
-| Detailed functional test strategy (data-parity / UAT / E2E / API) | `anti-legacy:test-plan` |
-| Functional test scripts (data-parity / UAT / E2E / API) | `anti-legacy:test-scripts` |
-| End-to-end migration plan (epics→stories→tasks→subtasks + Jira CSV) | `anti-legacy:migration-plan` |
-| Risk log / register | `anti-legacy:risk-log` |
-| Design decisions log (ADRs) | `anti-legacy:decisions-log` |
-| Phase evidence log with receipts | `anti-legacy:evidence-log` |
 | Checking / recording a gate | `anti-legacy:gatekeeper` |
 | Creating build task list | `anti-legacy:planner` |
 | Building target code | `anti-legacy:swarm` |
